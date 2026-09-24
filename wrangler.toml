@@ -1,12 +1,3 @@
-﻿name = "sickle-aphid-dashboard"
+name = "sickle-aphid-dashboard"
 compatibility_date = "2026-09-24"
 pages_build_output_dir = "./frontend/dist"
-
-[vars]
-SUPABASE_URL = "https://ymahgwfgpooisanabeto.supabase.co"
-SUPABASE_BUCKET = "monitoring-images"
-DASHBOARD_DEVICE_ID = "PI5-001"
-DASHBOARD_TRAP_NAME = "Trap 001"
-DASHBOARD_TIMEZONE = "Asia/Kolkata"
-OFFLINE_THRESHOLD_MINUTES = "15"
-MAX_DETECTIONS = "5000"
