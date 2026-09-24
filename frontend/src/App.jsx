@@ -93,7 +93,7 @@ function App() {
         )}
         {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} loadingMore={loadingMore} />}
       </main>
-      <footer className="footer">Sickle Innovations Pvt Ltd · Smart Insect Monitoring · Read-only customer view</footer>
+      <footer className="footer">Sickle Innovations Pvt Ltd · Smart Aphid Monitoring · Read-only customer view</footer>
     </div>
   );
 }
@@ -107,7 +107,7 @@ function Header({ data, todayLabel }) {
         <img className="brand-logo" src="/brand/sickle-innovations-logo.png" alt="Sickle Innovations Pvt Ltd logo" />
         <div>
           <p className="eyebrow">Sickle Innovations Pvt Ltd</p>
-          <h1>Smart Insect Monitoring</h1>
+          <h1>Smart Aphid Monitoring</h1>
         </div>
       </div>
       <div className="header-meta">
@@ -306,6 +306,6 @@ function RecentDetections({ rows, timezone, hasMore, onLoadMore, loadingMore }) 
 }
 
 function EmptyState({ message }) { return <div className="empty-state">{message}</div>; }
-function LoadingScreen({ todayLabel }) { return <div className="app-shell"><header className="topbar"><div className="brand-block"><img className="brand-logo" src="/brand/sickle-innovations-logo.png" alt="Sickle Innovations Pvt Ltd logo" /><div><p className="eyebrow">Sickle Innovations Pvt Ltd</p><h1>Smart Insect Monitoring</h1></div></div><div className="header-meta"><div className="date-label">{todayLabel}</div><div className="status-pill status-unknown"><span className="status-dot" />Loading</div><div className="trap-label">Trap 001</div></div></header><main className="page-content"><div className="skeleton skeleton-intro" /><div className="kpi-grid">{[1, 2, 3, 4].map((item) => <div className="skeleton skeleton-card" key={item} />)}</div><div className="skeleton skeleton-chart" /><div className="skeleton skeleton-chart" /></main></div>; }
+function LoadingScreen({ todayLabel }) { return <div className="app-shell"><header className="topbar"><div className="brand-block"><img className="brand-logo" src="/brand/sickle-innovations-logo.png" alt="Sickle Innovations Pvt Ltd logo" /><div><p className="eyebrow">Sickle Innovations Pvt Ltd</p><h1>Smart Aphid Monitoring</h1></div></div><div className="header-meta"><div className="date-label">{todayLabel}</div><div className="status-pill status-unknown"><span className="status-dot" />Loading</div><div className="trap-label">Trap 001</div></div></header><main className="page-content"><div className="skeleton skeleton-intro" /><div className="kpi-grid">{[1, 2, 3, 4].map((item) => <div className="skeleton skeleton-card" key={item} />)}</div><div className="skeleton skeleton-chart" /><div className="skeleton skeleton-chart" /></main></div>; }
 
 export default App;

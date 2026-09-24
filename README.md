@@ -1,4 +1,4 @@
-# Smart Insect Monitoring — Customer Dashboard
+# Smart Aphid Monitoring — Customer Dashboard
 
 This is a completely separate, read-only customer dashboard. It is contained in `AphidCustomerDashboard` and does not depend on the existing application source, virtual environments, local image files, Raspberry Pi paths, or model files.
 
