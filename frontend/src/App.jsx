@@ -269,6 +269,7 @@ function SystemHealth({ health, timezone }) {
       {!health?.available ? <EmptyState message="Telemetry unavailable." /> : (
         <>
           <div className="health-status"><span className={`status-dot status-dot-${health.status}`} /><span>{health.status === "online" ? "Device online" : "Device offline"}</span></div>
+          <Compass direction={fields.wind_direction} angle={fields.wind_angle} />
           <div className="health-list">
             <HealthRow label="Last communication" value={formatDate(health.last_communication, timezone)} />
             {entries.map(([label, value]) => <HealthRow key={label} label={label} value={value} />)}
@@ -279,7 +280,23 @@ function SystemHealth({ health, timezone }) {
   );
 }
 
-function HealthRow({ label, value }) { return <div className="health-row"><span>{label}</span><strong>{value}</strong></div>; }
+function Compass({ direction, angle }) {
+  const numericAngle = Number(angle);
+  const safeAngle = Number.isFinite(numericAngle) ? numericAngle : 0;
+  return (
+    <div className="compass-wrap" aria-label={`Wind direction ${direction || "unavailable"}${angle == null ? "" : `, ${angle} degrees`}`}>
+      <div className="compass">
+        <span className="compass-label compass-north">N</span>
+        <span className="compass-label compass-east">E</span>
+        <span className="compass-label compass-south">S</span>
+        <span className="compass-label compass-west">W</span>
+        <div className="compass-needle" style={{ transform: `rotate(${safeAngle}deg)` }} aria-hidden="true"><span /></div>
+        <div className="compass-center" aria-hidden="true" />
+      </div>
+      <div className="compass-reading"><strong>{direction || "—"}</strong><span>{angle == null ? "Direction unavailable" : `${angle}° bearing`}</span></div>
+    </div>
+  );
+}
 
 function RecentDetections({ rows, timezone, hasMore, onLoadMore, loadingMore }) {
   return (
