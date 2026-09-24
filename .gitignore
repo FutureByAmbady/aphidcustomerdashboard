@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+!frontend/.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+dist/
+.vite/
+*.log
