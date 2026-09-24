@@ -257,6 +257,9 @@ function ImageLinks({ detection, compact = false }) {
 
 function SystemHealth({ health, timezone }) {
   const fields = health?.fields || {};
+  const windAngle = Number(fields.wind_angle);
+  const compassAngle = Number.isFinite(windAngle) ? windAngle : 0;
+  const windDirection = fields.wind_direction || "—";
   const entries = [
     ["Battery", fields.battery_percent == null ? null : `${fields.battery_percent}%`],
     ["Voltage", fields.battery_voltage == null ? null : `${fields.battery_voltage} V`],
@@ -269,6 +272,14 @@ function SystemHealth({ health, timezone }) {
       {!health?.available ? <EmptyState message="Telemetry unavailable." /> : (
         <>
           <div className="health-status"><span className={`status-dot status-dot-${health.status}`} /><span>{health.status === "online" ? "Device online" : "Device offline"}</span></div>
+          <div className="compass-wrap" aria-label={`Wind direction ${windDirection}, ${compassAngle} degrees`}>
+            <div className="compass" aria-hidden="true">
+              <span className="compass-label compass-north">N</span><span className="compass-label compass-east">E</span><span className="compass-label compass-south">S</span><span className="compass-label compass-west">W</span>
+              <span className="compass-needle" style={{ transform: `rotate(${compassAngle}deg)` }} />
+              <span className="compass-center" />
+            </div>
+            <div className="compass-reading"><strong>{windDirection}</strong><span>{fields.wind_angle == null ? "Direction unavailable" : `${fields.wind_angle}° bearing`}</span></div>
+          </div>
           <div className="health-list">
             <HealthRow label="Last communication" value={formatDate(health.last_communication, timezone)} />
             {entries.map(([label, value]) => <HealthRow key={label} label={label} value={value} />)}
