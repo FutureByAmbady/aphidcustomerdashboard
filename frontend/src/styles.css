@@ -237,3 +237,17 @@ h3 { font-size: 17px; line-height: 1.2; }
   }
   .history-grid .recent-row .image-frame { width: 52px; height: 48px; }
 }
+
+/* Natural page height: keep the footer directly after dashboard content. */
+.app-shell {
+  min-height: 0;
+}
+.page-content {
+  padding-bottom: 20px;
+}
+.history-grid {
+  margin-bottom: 0;
+}
+.footer {
+  padding: 0 20px 22px;
+}
