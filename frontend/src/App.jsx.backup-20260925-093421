@@ -310,7 +310,6 @@ function WindHistory({ rows, timezone, period, hasMore, onLoadMore, loadingMore 
     <section className="panel wind-history-panel">
       <div className="panel-heading"><div><p className="eyebrow">Device telemetry</p><h3>Wind history</h3></div><span className="wind-history-note">Last {period === 1 ? "day" : `${period} days`}</span></div>
       {!rows.length ? <EmptyState message="No wind readings available for this period." /> : (
-        <>
         <div className="wind-table-wrap">
           <table className="wind-table">
             <thead><tr><th>Time</th><th>Direction</th><th>Angle</th><th>Battery</th><th>Voltage</th></tr></thead>
@@ -318,7 +317,6 @@ function WindHistory({ rows, timezone, period, hasMore, onLoadMore, loadingMore 
           </table>
         </div>
         {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button></div>}
-        </>
       )}
     </section>
   );
