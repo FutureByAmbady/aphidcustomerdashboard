@@ -286,3 +286,55 @@ h3 { font-size: 17px; line-height: 1.2; }
 .telemetry-home::before { background: #7f9685; }
 .telemetry-warning { color: #986c3f; }
 .telemetry-warning::before { background: #c68a45; }
+
+/* Telemetry table: explicit aligned columns and safe status wrapping. */
+.wind-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+.wind-table th,
+.wind-table td {
+  box-sizing: border-box;
+  vertical-align: top;
+}
+.wind-table th:first-child,
+.wind-table td:first-child { width: 32%; }
+.wind-table th:nth-child(2),
+.wind-table td:nth-child(2) {
+  width: 28%;
+  padding-right: 14px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.wind-table th:nth-child(3),
+.wind-table td:nth-child(3) { width: 12%; }
+.wind-table th:nth-child(4),
+.wind-table td:nth-child(4) { width: 14%; }
+.wind-table th:nth-child(5),
+.wind-table td:nth-child(5) { width: 14%; }
+.wind-table td:nth-child(n+3) { white-space: nowrap; }
+.telemetry-label {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: flex-start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.telemetry-label::before {
+  margin-top: .35em;
+}
+@media (max-width: 640px) {
+  .wind-table-wrap {
+    overflow-x: auto;
+  }
+  .wind-table {
+    min-width: 500px;
+  }
+  .wind-table th:nth-child(2),
+  .wind-table td:nth-child(2) {
+    padding-right: 12px;
+  }
+}
