@@ -80,3 +80,13 @@ h3 { font-size: 17px; }
   .recent-row .image-links.compact { grid-column: 3; grid-row: 1 / span 2; }
   .recent-row .image-frame { width: 52px; height: 48px; }
 }
+
+/* Compact recent alignment */
+@media (min-width: 641px) {
+  .history-grid { grid-template-columns: 1fr 1fr; }
+  .recent-row { grid-template-columns: 56px minmax(145px, 190px) auto auto max-content; gap: 10px; }
+  .recent-time { min-width: 0; }
+  .recent-count { text-align: left; }
+  .record-status { text-align: left; }
+  .image-links.compact { align-items: flex-start; }
+}
