@@ -117,8 +117,6 @@ export async function onRequestGet(context) {
   const period = Math.min(30, Math.max(1, Number.parseInt(url.searchParams.get('period') || '7', 10) || 7));
   const historyOffset = Math.max(0, Number.parseInt(url.searchParams.get('history_offset') || '0', 10) || 0);
   const historyLimit = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get('history_limit') || '5', 10) || 5));
-  const windOffset = Math.max(0, Number.parseInt(url.searchParams.get('wind_offset') || '0', 10) || 0);
-  const windLimit = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get('wind_limit') || '5', 10) || 5));
   const timezone = envValue(env, 'DASHBOARD_TIMEZONE') || 'Asia/Kolkata';
   const deviceId = envValue(env, 'DASHBOARD_DEVICE_ID') || 'PI5-001';
   const trapName = envValue(env, 'DASHBOARD_TRAP_NAME') || 'Trap 001';
@@ -172,13 +170,12 @@ export async function onRequestGet(context) {
       device_id: `eq.${deviceId}`,
       recorded_at: `gte.${currentStart.toISOString()}`,
       order: 'recorded_at.desc',
-      limit: String(Math.min(5000, windOffset + windLimit + 1)),
+      limit: envValue(env, 'MAX_WIND_HISTORY') || '200',
     });
     telemetryParams.append('recorded_at', `lt.${tomorrowStart.toISOString()}`);
     const telemetryRows = await querySupabase(env, 'wind_data', telemetryParams);
     const telemetry = telemetryRows[0];
-    const windPageRows = telemetryRows.slice(windOffset, windOffset + windLimit);
-    const windHistory = windPageRows.filter((row) => parseTimestamp(row.recorded_at)).map((row) => ({
+    const windHistory = telemetryRows.filter((row) => parseTimestamp(row.recorded_at)).map((row) => ({
       recorded_at: parseTimestamp(row.recorded_at).toISOString(),
       wind_direction: row.wind_direction ?? null,
       wind_angle: row.wind_angle ?? null,
@@ -206,9 +203,6 @@ export async function onRequestGet(context) {
       },
       trend: Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => ({ date, count })),
       wind_history: windHistory,
-      wind_history_offset: windOffset,
-      wind_history_limit: windLimit,
-      wind_history_has_more: telemetryRows.length > windOffset + windLimit,
       latest_detection: latest,
       recent_detections: historyRows,
       history_offset: historyOffset,

@@ -32,7 +32,6 @@ function App() {
   const [state, setState] = useState("loading");
   const [error, setError] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
-  const [loadingMoreWind, setLoadingMoreWind] = useState(false);
 
   const loadDashboard = useCallback(async (signal) => {
     setState("loading");
@@ -72,26 +71,6 @@ function App() {
     }
   }, [data, loadingMore, period]);
 
-  const loadMoreWindHistory = useCallback(async () => {
-    if (!data?.wind_history_has_more || loadingMoreWind) return;
-    setLoadingMoreWind(true);
-    try {
-      const offset = data.wind_history?.length || 0;
-      const response = await fetch(`${API_BASE_URL}/api/dashboard?period=${period}&wind_offset=${offset}&wind_limit=5`);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.detail || "Unable to load more wind history.");
-      setData((current) => ({
-        ...current,
-        ...payload,
-        wind_history: [...(current?.wind_history || []), ...(payload.wind_history || [])],
-      }));
-    } catch (requestError) {
-      setError(requestError.message || "Unable to load more wind history.");
-    } finally {
-      setLoadingMoreWind(false);
-    }
-  }, [data, loadingMoreWind, period]);
-
   useEffect(() => {
     const controller = new AbortController();
     loadDashboard(controller.signal);
@@ -112,7 +91,7 @@ function App() {
             <button className="text-button" onClick={() => loadDashboard()}>Try again</button>
           </div>
         )}
-        {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} loadingMore={loadingMore} onLoadMoreWind={loadMoreWindHistory} loadingMoreWind={loadingMoreWind} />}
+        {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} loadingMore={loadingMore} />}
       </main>
       <footer className="footer">Sickle Innovations Pvt Ltd · Smart Aphid Monitoring · Read-only customer view</footer>
     </div>
@@ -143,7 +122,7 @@ function Header({ data, todayLabel }) {
   );
 }
 
-function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore, onLoadMoreWind, loadingMoreWind }) {
+function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore }) {
   const kpis = data.kpis || {};
   const activity = kpis.activity || {};
   const latest = data.latest_detection;
@@ -190,10 +169,9 @@ function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore, onLoadMor
         <SystemHealth health={data.health} timezone={data.timezone} />
       </section>
 
-      <section className="history-grid">
-        <RecentDetections rows={data.recent_detections || []} timezone={data.timezone} hasMore={data.history_has_more} onLoadMore={onLoadMore} loadingMore={loadingMore} />
-        <WindHistory rows={data.wind_history || []} timezone={data.timezone} period={period} hasMore={data.wind_history_has_more} onLoadMore={onLoadMoreWind} loadingMore={loadingMoreWind} />
-      </section>
+      <WindHistory rows={data.wind_history || []} timezone={data.timezone} period={period} />
+
+      <RecentDetections rows={data.recent_detections || []} timezone={data.timezone} hasMore={data.history_has_more} onLoadMore={onLoadMore} loadingMore={loadingMore} />
     </>
   );
 }
@@ -305,7 +283,7 @@ function SystemHealth({ health, timezone }) {
 
 function HealthRow({ label, value }) { return <div className="health-row"><span>{label}</span><strong>{value}</strong></div>; }
 
-function WindHistory({ rows, timezone, period, hasMore, onLoadMore, loadingMore }) {
+function WindHistory({ rows, timezone, period }) {
   return (
     <section className="panel wind-history-panel">
       <div className="panel-heading"><div><p className="eyebrow">Device telemetry</p><h3>Wind history</h3></div><span className="wind-history-note">Last {period === 1 ? "day" : `${period} days`}</span></div>
@@ -316,7 +294,6 @@ function WindHistory({ rows, timezone, period, hasMore, onLoadMore, loadingMore 
             <tbody>{rows.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td><strong>{formatDate(row.recorded_at, timezone)}</strong><span className="table-muted">{relativeTime(row.recorded_at)}</span></td><td>{row.wind_direction || "â€”"}</td><td>{row.wind_angle == null ? "â€”" : `${row.wind_angle}Â°`}</td><td>{row.battery_percent == null ? "â€”" : `${row.battery_percent}%`}</td><td>{row.battery_voltage == null ? "â€”" : `${row.battery_voltage} V`}</td></tr>)}</tbody>
           </table>
         </div>
-        {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button></div>}
       )}
     </section>
   );
