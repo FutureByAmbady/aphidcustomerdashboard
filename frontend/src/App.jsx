@@ -1,11 +1,11 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, "");
 
 function formatDate(value, timezone, withTime = true) {
-  if (!value) return "â€”";
+  if (!value) return "—";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "â€”";
+  if (Number.isNaN(date.getTime())) return "—";
   return new Intl.DateTimeFormat("en-IN", {
     dateStyle: "medium",
     ...(withTime ? { timeStyle: "short" } : {}),
@@ -114,7 +114,7 @@ function App() {
         )}
         {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} loadingMore={loadingMore} onLoadMoreWind={loadMoreWindHistory} loadingMoreWind={loadingMoreWind} />}
       </main>
-      <footer className="footer">Sickle Innovations Pvt Ltd Â· Smart Aphid Monitoring Â· Read-only customer view</footer>
+      <footer className="footer">Sickle Innovations Pvt Ltd · Smart Aphid Monitoring · Read-only customer view</footer>
     </div>
   );
 }
@@ -159,7 +159,7 @@ function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore, onLoadMor
       </section>
 
       <section className="kpi-grid" aria-label="Monitoring summary">
-        <KpiCard label="Aphids detected today" value={kpis.aphids_today} note="Sum of todayâ€™s detections" />
+        <KpiCard label="Aphids detected today" value={kpis.aphids_today} note="Today’s total from processed detections" />
         <KpiCard
           label="Aphid activity"
           value={activity.label || "Not enough data"}
@@ -202,7 +202,7 @@ function KpiCard({ label, value, note, tone = "", compact = false }) {
   return (
     <article className={`kpi-card ${tone}`}>
       <p className="kpi-label">{label}</p>
-      <div className={`kpi-value ${compact ? "compact-value" : ""}`}>{value ?? "â€”"}</div>
+      <div className={`kpi-value ${compact ? "compact-value" : ""}`}>{value ?? "—"}</div>
       <p className="kpi-note">{note}</p>
     </article>
   );
@@ -253,7 +253,7 @@ function LatestDetection({ detection, timezone }) {
         <div className="latest-content">
           <ImageFrame detection={detection} large />
           <div className="latest-details">
-            <div className="count-display"><strong>{detection.insect_count}</strong><span>aphids detected</span></div>
+            <div className="count-display"><strong>{detection.insect_count}</strong><span>{detection.insect_count === 1 ? "aphid detected" : "aphids detected"}</span></div>
             <p className="capture-time">{formatDate(detection.captured_at, timezone)}</p>
             <ImageLinks detection={detection} />
           </div>
@@ -276,7 +276,7 @@ function ImageLinks({ detection, compact = false }) {
   if (detection?.original_image_url && detection.original_image_url !== detection.result_image_url) links.push({ label: "View original", url: detection.original_image_url });
   if (!links.length && detection?.image_url) links.push({ label: "View image", url: detection.image_url });
   if (!links.length) return null;
-  return <div className={`image-links ${compact ? "compact" : ""}`}>{links.map((link) => <a key={link.label} className={compact ? "view-link" : "primary-button"} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>)}</div>;
+  return <div className={`image-links ${compact ? "compact" : ""}`}>{links.map((link) => <a key={link.label} className={compact ? "view-link" : "primary-button"} href={link.url} target="_blank" rel="noreferrer" aria-label={link.label}>{link.label}</a>)}</div>;
 }
 
 function SystemHealth({ health, timezone }) {
@@ -285,7 +285,7 @@ function SystemHealth({ health, timezone }) {
     ["Battery", fields.battery_percent == null ? null : `${fields.battery_percent}%`],
     ["Voltage", fields.battery_voltage == null ? null : `${fields.battery_voltage} V`],
     ["Wind direction", fields.wind_direction],
-    ["Wind angle", fields.wind_angle == null ? null : `${fields.wind_angle}Â°`],
+    ["Wind angle", fields.wind_angle == null ? null : `${fields.wind_angle}°`],
   ].filter(([, value]) => value != null && value !== "");
   return (
     <section className="panel health-panel">
@@ -308,16 +308,16 @@ function HealthRow({ label, value }) { return <div className="health-row"><span>
 function WindHistory({ rows, timezone, period, hasMore, onLoadMore, loadingMore }) {
   return (
     <section className="panel wind-history-panel">
-      <div className="panel-heading"><div><p className="eyebrow">Device telemetry</p><h3>Wind history</h3></div><span className="wind-history-note">Last {period === 1 ? "day" : `${period} days`}</span></div>
+      <div className="panel-heading"><div><p className="eyebrow">Device telemetry</p><h3>Wind &amp; device history</h3></div><span className="wind-history-note">Last {period === 1 ? "day" : `${period} days`}</span></div>
       {!rows.length ? <EmptyState message="No wind readings available for this period." /> : (
         <>
         <div className="wind-table-wrap">
           <table className="wind-table">
             <thead><tr><th>Time</th><th>Direction</th><th>Angle</th><th>Battery</th><th>Voltage</th></tr></thead>
-            <tbody>{rows.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td><strong>{formatDate(row.recorded_at, timezone)}</strong><span className="table-muted">{relativeTime(row.recorded_at)}</span></td><td>{row.wind_direction || "â€”"}</td><td>{row.wind_angle == null ? "â€”" : `${row.wind_angle}Â°`}</td><td>{row.battery_percent == null ? "â€”" : `${row.battery_percent}%`}</td><td>{row.battery_voltage == null ? "â€”" : `${row.battery_voltage} V`}</td></tr>)}</tbody>
+            <tbody>{rows.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td><strong>{formatDate(row.recorded_at, timezone)}</strong><span className="table-muted">{relativeTime(row.recorded_at)}</span></td><td>{row.wind_direction || "—"}</td><td>{row.wind_angle == null ? "—" : `${row.wind_angle}°`}</td><td>{row.battery_percent == null ? "—" : `${row.battery_percent}%`}</td><td>{row.battery_voltage == null ? "—" : `${row.battery_voltage} V`}</td></tr>)}</tbody>
           </table>
         </div>
-        {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loadingâ€¦" : "Show more"}</button></div>}
+        {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button></div>}
         </>
       )}
     </section>
@@ -335,13 +335,13 @@ function RecentDetections({ rows, timezone, hasMore, onLoadMore, loadingMore }) 
               <div className="recent-row" key={`${row.captured_at}-${index}`}>
                 <ImageFrame detection={row} />
                 <div className="recent-time"><strong>{formatDate(row.captured_at, timezone)}</strong><span>{relativeTime(row.captured_at)}</span></div>
-                <div className="recent-count"><strong>{row.insect_count}</strong><span>aphids</span></div>
+                <div className="recent-count"><strong>{row.insect_count}</strong><span>{row.insect_count === 1 ? "aphid" : "aphids"}</span></div>
 
                 <ImageLinks detection={row} compact />
               </div>
             ))}
           </div>
-          {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loadingâ€¦" : "Show more"}</button></div>}
+          {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button></div>}
         </>
       )}
     </section>
