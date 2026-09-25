@@ -182,3 +182,15 @@ h3 { font-size: 17px; }
     max-width: 220px;
   }
 }
+
+/* Remove excess space between detection details */
+@media (min-width: 641px) {
+  .recent-row {
+    grid-template-columns: 56px 220px 52px max-content;
+    justify-content: start;
+    gap: 12px;
+  }
+  .recent-time {
+    max-width: 220px;
+  }
+}
