@@ -251,3 +251,30 @@ h3 { font-size: 17px; line-height: 1.2; }
 .footer {
   padding: 0 20px 22px;
 }
+
+/* Detection actions: horizontal on desktop/laptop, responsive on mobile. */
+@media (min-width: 641px) {
+  .history-grid .recent-row {
+    grid-template-columns: 56px minmax(160px, 220px) 52px max-content;
+  }
+  .history-grid .image-links.compact {
+    min-width: max-content;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+  .history-grid .image-links.compact .view-link {
+    white-space: nowrap;
+  }
+}
+@media (max-width: 640px) {
+  .history-grid .image-links.compact {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+    flex-wrap: wrap;
+    max-width: 150px;
+  }
+}
