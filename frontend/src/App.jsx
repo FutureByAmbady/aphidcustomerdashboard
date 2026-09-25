@@ -26,6 +26,33 @@ function relativeTime(value) {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
+const DIRECTION_LABELS = {
+  N: "North", NE: "Northeast", E: "East", SE: "Southeast",
+  S: "South", SW: "Southwest", W: "West", NW: "Northwest",
+};
+
+function normalizeTelemetryCode(value) {
+  return String(value ?? "").trim().toUpperCase().replace(/[\s–—-]+/g, "_");
+}
+
+function telemetryDisplay(statusValue, directionValue) {
+  const status = normalizeTelemetryCode(statusValue);
+  const direction = normalizeTelemetryCode(directionValue);
+  const statusAliases = {
+    POWER_FAIL_HOME: { label: "Power Failure — Home Position", tone: "warning" },
+    DAILY_HOME: { label: "Daily Home Position", tone: "home" },
+    H: { label: "Home Position", tone: "home" },
+    SUCCESS: { label: "Normal", tone: "normal" },
+  };
+  if (statusAliases[status] && status !== "SUCCESS") return { ...statusAliases[status], secondary: "" };
+  if (DIRECTION_LABELS[direction]) {
+    return { label: DIRECTION_LABELS[direction], tone: "direction", secondary: status === "SUCCESS" ? "Normal" : "" };
+  }
+  if (statusAliases[status]) return { ...statusAliases[status], secondary: "" };
+  if (DIRECTION_LABELS[status]) return { label: DIRECTION_LABELS[status], tone: "direction", secondary: "" };
+  return { label: directionValue || statusValue || "—", tone: "neutral", secondary: "" };
+}
+
 function App() {
   const [period, setPeriod] = useState(7);
   const [data, setData] = useState(null);
@@ -281,12 +308,14 @@ function ImageLinks({ detection, compact = false }) {
 
 function SystemHealth({ health, timezone }) {
   const fields = health?.fields || {};
+  const meaning = telemetryDisplay(fields.status, fields.wind_direction);
   const entries = [
+    ["Telemetry status", meaning.label],
     ["Battery", fields.battery_percent == null ? null : `${fields.battery_percent}%`],
     ["Voltage", fields.battery_voltage == null ? null : `${fields.battery_voltage} V`],
-    ["Wind direction", fields.wind_direction],
+    [meaning.tone === "warning" || meaning.tone === "home" ? null : "Wind direction", meaning.tone === "warning" || meaning.tone === "home" ? null : meaning.label],
     ["Wind angle", fields.wind_angle == null ? null : `${fields.wind_angle}°`],
-  ].filter(([, value]) => value != null && value !== "");
+  ].filter(([label, value]) => label && value != null && value !== "");
   return (
     <section className="panel health-panel">
       <div className="panel-heading"><div><p className="eyebrow">Device telemetry</p><h3>System health</h3></div></div>
@@ -314,7 +343,7 @@ function WindHistory({ rows, timezone, period, hasMore, onLoadMore, loadingMore 
         <div className="wind-table-wrap">
           <table className="wind-table">
             <thead><tr><th>Time</th><th>Direction</th><th>Angle</th><th>Battery</th><th>Voltage</th></tr></thead>
-            <tbody>{rows.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td><strong>{formatDate(row.recorded_at, timezone)}</strong><span className="table-muted">{relativeTime(row.recorded_at)}</span></td><td>{row.wind_direction || "—"}</td><td>{row.wind_angle == null ? "—" : `${row.wind_angle}°`}</td><td>{row.battery_percent == null ? "—" : `${row.battery_percent}%`}</td><td>{row.battery_voltage == null ? "—" : `${row.battery_voltage} V`}</td></tr>)}</tbody>
+            <tbody>{rows.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td><strong>{formatDate(row.recorded_at, timezone)}</strong><span className="table-muted">{relativeTime(row.recorded_at)}</span></td><td><span className={`telemetry-label telemetry-${telemetryDisplay(row.status, row.wind_direction).tone}`}>{telemetryDisplay(row.status, row.wind_direction).label}</span>{telemetryDisplay(row.status, row.wind_direction).secondary && <span className="table-muted">{telemetryDisplay(row.status, row.wind_direction).secondary}</span>}</td><td>{row.wind_angle == null ? "—" : `${row.wind_angle}°`}</td><td>{row.battery_percent == null ? "—" : `${row.battery_percent}%`}</td><td>{row.battery_voltage == null ? "—" : `${row.battery_voltage} V`}</td></tr>)}</tbody>
           </table>
         </div>
         {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button></div>}

@@ -1,5 +1,5 @@
 const DETECTION_COLUMNS = 'device_id,captured_at,insect_count,result_image_url,original_image_url';
-const TELEMETRY_COLUMNS = 'device_id,recorded_at,battery_percent,battery_voltage,wind_direction,wind_angle';
+const TELEMETRY_COLUMNS = 'device_id,recorded_at,battery_percent,battery_voltage,wind_direction,wind_angle,status';
 
 function envValue(env, ...names) {
   for (const name of names) {
@@ -182,13 +182,14 @@ export async function onRequestGet(context) {
       recorded_at: parseTimestamp(row.recorded_at).toISOString(),
       wind_direction: row.wind_direction ?? null,
       wind_angle: row.wind_angle ?? null,
+      status: row.status ?? null,
       battery_percent: row.battery_percent ?? null,
       battery_voltage: row.battery_voltage ?? null,
     }));
     const recordedAt = parseTimestamp(telemetry?.recorded_at);
     const ageMinutes = recordedAt ? (now.getTime() - recordedAt.getTime()) / 60000 : null;
     const fields = {};
-    for (const key of ['battery_percent', 'battery_voltage', 'wind_direction', 'wind_angle']) {
+    for (const key of ['battery_percent', 'battery_voltage', 'wind_direction', 'wind_angle', 'status']) {
       if (telemetry?.[key] !== null && telemetry?.[key] !== undefined) fields[key] = telemetry[key];
     }
 

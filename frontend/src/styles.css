@@ -278,3 +278,11 @@ h3 { font-size: 17px; line-height: 1.2; }
     max-width: 150px;
   }
 }
+
+/* Customer-readable telemetry status presentation. */
+.telemetry-label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.telemetry-label::before { content: ""; width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: #98a79c; }
+.telemetry-normal::before, .telemetry-direction::before { background: #3aa36b; }
+.telemetry-home::before { background: #7f9685; }
+.telemetry-warning { color: #986c3f; }
+.telemetry-warning::before { background: #c68a45; }
