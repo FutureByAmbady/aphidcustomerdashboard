@@ -159,3 +159,14 @@ h3 { font-size: 17px; }
     padding: 8px 5px;
   }
 }
+
+/* Direct image actions */
+@media (min-width: 641px) {
+  .recent-row { grid-template-columns: 56px minmax(145px, 1fr) 45px max-content; }
+  .image-links.compact { min-width: 112px; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .image-links.compact .view-link { padding: 4px 8px; border: 1px solid #d5e5d7; border-radius: 6px; background: #f5faf4; font-size: 11px; line-height: 1.2; }
+}
+@media (max-width: 640px) {
+  .recent-row .image-links.compact { grid-column: 3; grid-row: 1 / span 2; align-items: flex-end; }
+  .image-links.compact .view-link { padding: 3px 5px; font-size: 10px; }
+}

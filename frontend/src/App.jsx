@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, "");
 
 function formatDate(value, timezone, withTime = true) {
-  if (!value) return "—";
+  if (!value) return "â€”";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
+  if (Number.isNaN(date.getTime())) return "â€”";
   return new Intl.DateTimeFormat("en-IN", {
     dateStyle: "medium",
     ...(withTime ? { timeStyle: "short" } : {}),
@@ -114,7 +114,7 @@ function App() {
         )}
         {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} loadingMore={loadingMore} onLoadMoreWind={loadMoreWindHistory} loadingMoreWind={loadingMoreWind} />}
       </main>
-      <footer className="footer">Sickle Innovations Pvt Ltd · Smart Aphid Monitoring · Read-only customer view</footer>
+      <footer className="footer">Sickle Innovations Pvt Ltd Â· Smart Aphid Monitoring Â· Read-only customer view</footer>
     </div>
   );
 }
@@ -159,7 +159,7 @@ function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore, onLoadMor
       </section>
 
       <section className="kpi-grid" aria-label="Monitoring summary">
-        <KpiCard label="Aphids detected today" value={kpis.aphids_today} note="Sum of today’s detections" />
+        <KpiCard label="Aphids detected today" value={kpis.aphids_today} note="Sum of todayâ€™s detections" />
         <KpiCard
           label="Aphid activity"
           value={activity.label || "Not enough data"}
@@ -202,7 +202,7 @@ function KpiCard({ label, value, note, tone = "", compact = false }) {
   return (
     <article className={`kpi-card ${tone}`}>
       <p className="kpi-label">{label}</p>
-      <div className={`kpi-value ${compact ? "compact-value" : ""}`}>{value ?? "—"}</div>
+      <div className={`kpi-value ${compact ? "compact-value" : ""}`}>{value ?? "â€”"}</div>
       <p className="kpi-note">{note}</p>
     </article>
   );
@@ -285,7 +285,7 @@ function SystemHealth({ health, timezone }) {
     ["Battery", fields.battery_percent == null ? null : `${fields.battery_percent}%`],
     ["Voltage", fields.battery_voltage == null ? null : `${fields.battery_voltage} V`],
     ["Wind direction", fields.wind_direction],
-    ["Wind angle", fields.wind_angle == null ? null : `${fields.wind_angle}°`],
+    ["Wind angle", fields.wind_angle == null ? null : `${fields.wind_angle}Â°`],
   ].filter(([, value]) => value != null && value !== "");
   return (
     <section className="panel health-panel">
@@ -314,10 +314,10 @@ function WindHistory({ rows, timezone, period, hasMore, onLoadMore, loadingMore 
         <div className="wind-table-wrap">
           <table className="wind-table">
             <thead><tr><th>Time</th><th>Direction</th><th>Angle</th><th>Battery</th><th>Voltage</th></tr></thead>
-            <tbody>{rows.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td><strong>{formatDate(row.recorded_at, timezone)}</strong><span className="table-muted">{relativeTime(row.recorded_at)}</span></td><td>{row.wind_direction || "—"}</td><td>{row.wind_angle == null ? "—" : `${row.wind_angle}°`}</td><td>{row.battery_percent == null ? "—" : `${row.battery_percent}%`}</td><td>{row.battery_voltage == null ? "—" : `${row.battery_voltage} V`}</td></tr>)}</tbody>
+            <tbody>{rows.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td><strong>{formatDate(row.recorded_at, timezone)}</strong><span className="table-muted">{relativeTime(row.recorded_at)}</span></td><td>{row.wind_direction || "â€”"}</td><td>{row.wind_angle == null ? "â€”" : `${row.wind_angle}Â°`}</td><td>{row.battery_percent == null ? "â€”" : `${row.battery_percent}%`}</td><td>{row.battery_voltage == null ? "â€”" : `${row.battery_voltage} V`}</td></tr>)}</tbody>
           </table>
         </div>
-        {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button></div>}
+        {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loadingâ€¦" : "Show more"}</button></div>}
         </>
       )}
     </section>
@@ -336,12 +336,12 @@ function RecentDetections({ rows, timezone, hasMore, onLoadMore, loadingMore }) 
                 <ImageFrame detection={row} />
                 <div className="recent-time"><strong>{formatDate(row.captured_at, timezone)}</strong><span>{relativeTime(row.captured_at)}</span></div>
                 <div className="recent-count"><strong>{row.insect_count}</strong><span>aphids</span></div>
-                <div className={`record-status ${row.image_available ? "available" : "missing"}`}>{row.image_available ? "Image available" : "Image unavailable"}</div>
+
                 <ImageLinks detection={row} compact />
               </div>
             ))}
           </div>
-          {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button></div>}
+          {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loadingâ€¦" : "Show more"}</button></div>}
         </>
       )}
     </section>
@@ -352,3 +352,4 @@ function EmptyState({ message }) { return <div className="empty-state">{message}
 function LoadingScreen({ todayLabel }) { return <div className="app-shell"><header className="topbar"><div className="brand-block"><img className="brand-logo" src="/brand/sickle-innovations-logo.png" alt="Sickle Innovations Pvt Ltd logo" /><div><p className="eyebrow">Sickle Innovations Pvt Ltd</p><h1>Smart Aphid Monitoring</h1></div></div><div className="header-meta"><div className="date-label">{todayLabel}</div><div className="status-pill status-unknown"><span className="status-dot" />Loading</div><div className="trap-label">Trap 001</div></div></header><main className="page-content"><div className="skeleton skeleton-intro" /><div className="kpi-grid">{[1, 2, 3, 4].map((item) => <div className="skeleton skeleton-card" key={item} />)}</div><div className="skeleton skeleton-chart" /><div className="skeleton skeleton-chart" /></main></div>; }
 
 export default App;
+
