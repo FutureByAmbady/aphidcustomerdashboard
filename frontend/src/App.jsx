@@ -314,7 +314,7 @@ function WindHistory({ rows, timezone, period, hasMore, onLoadMore, loadingMore 
         <div className="wind-table-wrap">
           <table className="wind-table">
             <thead><tr><th>Time</th><th>Direction</th><th>Angle</th><th>Battery</th><th>Voltage</th></tr></thead>
-            <tbody>{rows.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td><strong>{formatDate(row.recorded_at, timezone)}</strong><span className="table-muted">{relativeTime(row.recorded_at)}</span></td><td>{row.wind_direction || "â€”"}</td><td>{row.wind_angle == null ? "â€”" : `${row.wind_angle}Â°`}</td><td>{row.battery_percent == null ? "â€”" : `${row.battery_percent}%`}</td><td>{row.battery_voltage == null ? "â€”" : `${row.battery_voltage} V`}</td></tr>)}</tbody>
+            <tbody>{rows.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td><strong>{formatDate(row.recorded_at, timezone)}</strong><span className="table-muted">{relativeTime(row.recorded_at)}</span></td><td>{row.wind_direction || "—"}</td><td>{row.wind_angle == null ? "—" : `${row.wind_angle}°`}</td><td>{row.battery_percent == null ? "—" : `${row.battery_percent}%`}</td><td>{row.battery_voltage == null ? "—" : `${row.battery_voltage} V`}</td></tr>)}</tbody>
           </table>
         </div>
         {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button></div>}
