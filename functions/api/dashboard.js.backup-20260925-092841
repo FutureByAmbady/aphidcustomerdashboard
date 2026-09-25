@@ -168,20 +168,11 @@ export async function onRequestGet(context) {
     const telemetryParams = new URLSearchParams({
       select: TELEMETRY_COLUMNS,
       device_id: `eq.${deviceId}`,
-      recorded_at: `gte.${currentStart.toISOString()}`,
       order: 'recorded_at.desc',
-      limit: envValue(env, 'MAX_WIND_HISTORY') || '200',
+      limit: '1',
     });
-    telemetryParams.append('recorded_at', `lt.${tomorrowStart.toISOString()}`);
     const telemetryRows = await querySupabase(env, 'wind_data', telemetryParams);
     const telemetry = telemetryRows[0];
-    const windHistory = telemetryRows.filter((row) => parseTimestamp(row.recorded_at)).map((row) => ({
-      recorded_at: parseTimestamp(row.recorded_at).toISOString(),
-      wind_direction: row.wind_direction ?? null,
-      wind_angle: row.wind_angle ?? null,
-      battery_percent: row.battery_percent ?? null,
-      battery_voltage: row.battery_voltage ?? null,
-    }));
     const recordedAt = parseTimestamp(telemetry?.recorded_at);
     const ageMinutes = recordedAt ? (now.getTime() - recordedAt.getTime()) / 60000 : null;
     const fields = {};
@@ -202,7 +193,6 @@ export async function onRequestGet(context) {
         last_detection: latest,
       },
       trend: Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => ({ date, count })),
-      wind_history: windHistory,
       latest_detection: latest,
       recent_detections: historyRows,
       history_offset: historyOffset,
