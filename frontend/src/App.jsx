@@ -46,7 +46,7 @@ function telemetryDisplay(statusValue, directionValue) {
   };
   if (statusAliases[status] && status !== "SUCCESS") return { ...statusAliases[status], secondary: "" };
   if (DIRECTION_LABELS[direction]) {
-    return { label: DIRECTION_LABELS[direction], tone: "direction", secondary: status === "SUCCESS" ? "Normal" : "" };
+    return { label: DIRECTION_LABELS[direction], tone: "direction", secondary: status === "SUCCESS" ? "Hourly" : "" };
   }
   if (statusAliases[status]) return { ...statusAliases[status], secondary: "" };
   if (DIRECTION_LABELS[status]) return { label: DIRECTION_LABELS[status], tone: "direction", secondary: "" };
