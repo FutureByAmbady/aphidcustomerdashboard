@@ -95,10 +95,16 @@ const WIND_PAGE_SIZE = 500;
 const COMPASS_DIRECTIONS = new Set(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']);
 const WIND_HISTORY_COLUMNS = ['recorded_at', 'wind_direction', 'wind_angle', 'previous_position', 'target_position', 'motor_direction', 'movement', 'required_pulses', 'actual_pulses', 'final_position', 'status', 'battery_percent', 'battery_voltage'];
 
+function normalizeTelemetryCode(value) {
+  return String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '');
+}
+
 function isValidWindReading(row) {
-  const direction = String(row.wind_direction ?? '').trim().toUpperCase();
+  const direction = normalizeTelemetryCode(row.wind_direction);
+  const status = normalizeTelemetryCode(row.status);
   const angle = row.wind_angle;
   return COMPASS_DIRECTIONS.has(direction)
+    && !['DAILY_HOME', 'POWER_FAIL_HOME', 'POWER_FAILURE_HOME'].includes(status)
     && angle !== null
     && angle !== undefined
     && angle !== ''
@@ -124,36 +130,47 @@ function hourlySlotKey(value, timezone) {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}`;
 }
 
+function windEventKey(row) {
+  const timestamp = parseTimestamp(row.recorded_at);
+  return JSON.stringify([
+    row.device_id ?? '', timestamp?.toISOString() ?? '',
+    normalizeTelemetryCode(row.wind_direction), row.wind_angle == null || row.wind_angle === '' ? null : Number(row.wind_angle),
+    normalizeTelemetryCode(row.status), row.previous_position ?? null, row.target_position ?? null,
+    normalizeTelemetryCode(row.motor_direction), row.movement ?? null, row.required_pulses ?? null,
+    row.actual_pulses ?? null, row.final_position ?? null, row.battery_percent ?? null, row.battery_voltage ?? null,
+  ]);
+}
+
 export function mergeWindRows(primaryRows, backupRows, timezone = 'Asia/Kolkata') {
-  const primaryBySlot = new Map();
-  const backupBySlot = new Map();
-  const addRows = (rows, target) => {
-    for (const row of rows || []) {
-      const timestamp = parseTimestamp(row.recorded_at);
-      const slot = hourlySlotKey(row.recorded_at, timezone);
-      if (!timestamp || !slot) continue;
-      if (!target.has(slot)) target.set(slot, []);
-      target.get(slot).push({ ...row, _timestamp: timestamp.getTime() });
-    }
+  const primaryRowsBySlot = new Map();
+  const primaryValidSlots = new Set();
+  const addPrimary = (row) => {
+    const timestamp = parseTimestamp(row.recorded_at);
+    const slot = hourlySlotKey(row.recorded_at, timezone);
+    if (!timestamp || !slot) return;
+    if (!primaryRowsBySlot.has(slot)) primaryRowsBySlot.set(slot, []);
+    primaryRowsBySlot.get(slot).push({ ...row, _timestamp: timestamp.getTime() });
+    if (isValidWindReading(row)) primaryValidSlots.add(slot);
   };
-  addRows(primaryRows, primaryBySlot);
-  addRows(backupRows, backupBySlot);
+  for (const row of primaryRows || []) addPrimary(row);
 
-  const selected = [];
-  for (const [slot, primary] of primaryBySlot) {
-    const validPrimary = primary.filter(isValidWindReading);
-    if (validPrimary.length) {
-      selected.push(...primary);
-      continue;
-    }
-    const validBackup = (backupBySlot.get(slot) || []).filter(isValidWindReading);
-    if (validBackup.length) selected.push(...validBackup);
-  }
-  for (const [slot, backup] of backupBySlot) {
-    if (!primaryBySlot.has(slot)) selected.push(...backup.filter(isValidWindReading));
+  const selected = [...primaryRowsBySlot.values()].flat();
+  for (const row of backupRows || []) {
+    const timestamp = parseTimestamp(row.recorded_at);
+    const slot = hourlySlotKey(row.recorded_at, timezone);
+    if (!timestamp || !slot) continue;
+    // Keep operational events from both sources; only suppress backup compass readings
+    // when a valid primary reading already covers that IST hour.
+    if (isValidWindReading(row) && primaryValidSlots.has(slot)) continue;
+    selected.push({ ...row, _timestamp: timestamp.getTime() });
   }
 
-  return selected
+  const unique = new Map();
+  for (const row of selected) {
+    const key = windEventKey(row);
+    if (!unique.has(key)) unique.set(key, row);
+  }
+  return [...unique.values()]
     .sort((a, b) => b._timestamp - a._timestamp || Number(b.id || 0) - Number(a.id || 0))
     .map((row) => {
       const result = { recorded_at: new Date(row._timestamp).toISOString() };
@@ -280,14 +297,18 @@ export async function onRequestGet(context) {
     telemetryParams.append('recorded_at', `lt.${tomorrowStart.toISOString()}`);
     const windSources = await queryWindSources(env, telemetryParams);
     const telemetryRows = windSources.rows;
-    const telemetry = telemetryRows.find(isValidWindReading) || telemetryRows[0] || null;
+    const latestEvent = telemetryRows[0] || null;
+    const latestWind = telemetryRows.find(isValidWindReading) || null;
     const windPageRows = telemetryRows.slice(windOffset, windOffset + windLimit);
     const windHistory = windPageRows;
-    const recordedAt = parseTimestamp(telemetry?.recorded_at);
+    const recordedAt = parseTimestamp(latestEvent?.recorded_at);
     const ageMinutes = recordedAt ? (now.getTime() - recordedAt.getTime()) / 60000 : null;
     const fields = {};
-    for (const key of ['battery_percent', 'battery_voltage', 'wind_direction', 'wind_angle', 'status']) {
-      if (telemetry?.[key] !== null && telemetry?.[key] !== undefined) fields[key] = telemetry[key];
+    for (const key of ['battery_percent', 'battery_voltage', 'status']) {
+      if (latestEvent?.[key] !== null && latestEvent?.[key] !== undefined) fields[key] = latestEvent[key];
+    }
+    for (const key of ['wind_direction', 'wind_angle']) {
+      if (latestWind?.[key] !== null && latestWind?.[key] !== undefined) fields[key] = latestWind[key];
     }
 
     return json({
@@ -314,8 +335,8 @@ export async function onRequestGet(context) {
       history_limit: historyLimit,
       history_has_more: historyOffset + historyLimit < currentRows.length,
       health: {
-        available: Boolean(telemetry),
-        status: recordedAt && ageMinutes <= offlineMinutes ? 'online' : telemetry ? 'offline' : 'unknown',
+        available: Boolean(latestEvent),
+        status: recordedAt && ageMinutes <= offlineMinutes ? 'online' : latestEvent ? 'offline' : 'unknown',
         last_communication: recordedAt?.toISOString() || null,
         fields,
       },

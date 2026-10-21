@@ -112,14 +112,24 @@ def parse_timestamp(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def normalize_telemetry_code(value: Any) -> str:
+    return "_".join(str(value or "").strip().upper().replace("-", " ").split())
+
+
 def is_valid_wind_reading(row: dict[str, Any]) -> bool:
-    direction = str(row.get("wind_direction") or "").strip().upper()
+    direction = normalize_telemetry_code(row.get("wind_direction"))
+    status = normalize_telemetry_code(row.get("status"))
     angle = row.get("wind_angle")
     try:
         numeric_angle = float(angle)
     except (TypeError, ValueError):
         return False
-    return direction in COMPASS_DIRECTIONS and 0 <= numeric_angle <= 360 and math.isfinite(numeric_angle)
+    return (
+        direction in COMPASS_DIRECTIONS
+        and status not in {"DAILY_HOME", "POWER_FAIL_HOME", "POWER_FAILURE_HOME"}
+        and 0 <= numeric_angle <= 360
+        and math.isfinite(numeric_angle)
+    )
 
 
 def hourly_slot_key(value: Any) -> str | None:
@@ -129,30 +139,50 @@ def hourly_slot_key(value: Any) -> str | None:
     return timestamp.astimezone(DISPLAY_TZ).strftime("%Y-%m-%dT%H")
 
 
+def wind_event_key(row: dict[str, Any]) -> tuple[str, ...]:
+    timestamp = parse_timestamp(row.get("recorded_at"))
+    angle = row.get("wind_angle")
+    try:
+        angle_key = str(float(angle)) if angle is not None and angle != "" else ""
+    except (TypeError, ValueError):
+        angle_key = str(angle)
+    return (
+        str(row.get("device_id") or ""), iso(timestamp) or "",
+        normalize_telemetry_code(row.get("wind_direction")), angle_key,
+        normalize_telemetry_code(row.get("status")), str(row.get("previous_position") if row.get("previous_position") is not None else ""),
+        str(row.get("target_position") if row.get("target_position") is not None else ""), normalize_telemetry_code(row.get("motor_direction")),
+        str(row.get("movement") if row.get("movement") is not None else ""), str(row.get("required_pulses") if row.get("required_pulses") is not None else ""),
+        str(row.get("actual_pulses") if row.get("actual_pulses") is not None else ""), str(row.get("final_position") if row.get("final_position") is not None else ""),
+        str(row.get("battery_percent") if row.get("battery_percent") is not None else ""), str(row.get("battery_voltage") if row.get("battery_voltage") is not None else ""),
+    )
+
+
 def merge_wind_rows(
     primary_rows: list[dict[str, Any]],
     backup_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     primary_by_slot: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    backup_by_slot: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for rows, target in ((primary_rows, primary_by_slot), (backup_rows, backup_by_slot)):
-        for row in rows:
-            slot = hourly_slot_key(row.get("recorded_at"))
-            if slot:
-                target[slot].append(row)
+    primary_valid_slots: set[str] = set()
+    for row in primary_rows:
+        slot = hourly_slot_key(row.get("recorded_at"))
+        if slot:
+            primary_by_slot[slot].append(row)
+            if is_valid_wind_reading(row):
+                primary_valid_slots.add(slot)
 
-    selected: list[dict[str, Any]] = []
-    for slot, primary in primary_by_slot.items():
-        valid_primary = [row for row in primary if is_valid_wind_reading(row)]
-        if valid_primary:
-            selected.extend(primary)
+    selected = [row for rows in primary_by_slot.values() for row in rows]
+    for row in backup_rows:
+        slot = hourly_slot_key(row.get("recorded_at"))
+        if not slot:
             continue
-        valid_backup = [row for row in backup_by_slot.get(slot, []) if is_valid_wind_reading(row)]
-        selected.extend(valid_backup)
-    for slot, backup in backup_by_slot.items():
-        if slot not in primary_by_slot:
-            selected.extend(row for row in backup if is_valid_wind_reading(row))
+        if is_valid_wind_reading(row) and slot in primary_valid_slots:
+            continue
+        selected.append(row)
 
+    unique: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in selected:
+        unique.setdefault(wind_event_key(row), row)
+    selected = list(unique.values())
     selected.sort(
         key=lambda row: (
             parse_timestamp(row.get("recorded_at")) or datetime.min.replace(tzinfo=timezone.utc),
@@ -322,7 +352,7 @@ def activity_summary(current_rows: list[dict[str, Any]], previous_rows: list[dic
     }
 
 
-def read_latest_wind_sources() -> tuple[dict[str, Any] | None, list[str]]:
+def read_latest_wind_sources() -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str]]:
     client = require_supabase()
     source_rows: dict[str, list[dict[str, Any]]] = {}
     warnings: list[str] = []
@@ -343,14 +373,18 @@ def read_latest_wind_sources() -> tuple[dict[str, Any] | None, list[str]]:
             source_rows[table] = []
             warnings.append(f"{table} could not be loaded for latest telemetry.")
     merged = merge_wind_rows(source_rows["wind_data"], source_rows["wind_operation_logs"])
-    return (merged[0] if merged else None), warnings
+    latest_wind = next((row for row in merged if is_valid_wind_reading(row)), None)
+    return (merged[0] if merged else None), latest_wind, warnings
 
 
-def read_health(row: dict[str, Any] | None = None) -> dict[str, Any]:
+def read_health(
+    event_row: dict[str, Any] | None = None,
+    wind_row: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     warnings: list[str] = []
-    if row is None:
-        row, warnings = read_latest_wind_sources()
-    if not row:
+    if event_row is None and wind_row is None:
+        event_row, wind_row, warnings = read_latest_wind_sources()
+    if not event_row:
         return {
             "available": False,
             "status": "unknown",
@@ -359,15 +393,18 @@ def read_health(row: dict[str, Any] | None = None) -> dict[str, Any]:
             "source_warnings": warnings,
         }
 
-    recorded_at = parse_timestamp(row.get("recorded_at"))
+    recorded_at = parse_timestamp(event_row.get("recorded_at"))
     age_minutes = None
     if recorded_at:
         age_minutes = (datetime.now(timezone.utc) - recorded_at).total_seconds() / 60
     status = "online" if age_minutes is not None and age_minutes <= OFFLINE_THRESHOLD_MINUTES else "offline"
     fields: dict[str, Any] = {}
-    for key in ("battery_percent", "battery_voltage", "wind_direction", "wind_angle", "status"):
-        if row.get(key) is not None:
-            fields[key] = row[key]
+    for key in ("battery_percent", "battery_voltage", "status"):
+        if event_row.get(key) is not None:
+            fields[key] = event_row[key]
+    for key in ("wind_direction", "wind_angle"):
+        if wind_row and wind_row.get(key) is not None:
+            fields[key] = wind_row[key]
     return {
         "available": True,
         "status": status,
@@ -444,8 +481,9 @@ def dashboard(
     ]
     wind_rows, wind_warnings = read_wind_sources(current_start_utc, tomorrow_start_utc)
     wind_history = wind_rows[wind_offset:wind_offset + wind_limit]
+    latest_event = wind_rows[0] if wind_rows else None
     latest_wind = next((row for row in wind_rows if is_valid_wind_reading(row)), None)
-    health_data = read_health(latest_wind)
+    health_data = read_health(latest_event, latest_wind)
     wind_warnings = list(dict.fromkeys(wind_warnings + health_data.get("source_warnings", [])))
     return {
         "trap_name": TRAP_NAME,

@@ -310,12 +310,13 @@ function ImageLinks({ detection, compact = false }) {
 
 function SystemHealth({ health, timezone }) {
   const fields = health?.fields || {};
-  const meaning = telemetryDisplay(fields.status, fields.wind_direction);
+  const meaning = telemetryDisplay(fields.status, null);
+  const direction = DIRECTION_LABELS[normalizeTelemetryCode(fields.wind_direction)] || fields.wind_direction;
   const entries = [
     ["Telemetry status", meaning.label],
     ["Battery", fields.battery_percent == null ? null : `${fields.battery_percent}%`],
     ["Voltage", fields.battery_voltage == null ? null : `${fields.battery_voltage} V`],
-    [meaning.tone === "warning" || meaning.tone === "home" ? null : "Wind direction", meaning.tone === "warning" || meaning.tone === "home" ? null : meaning.label],
+    ["Wind direction", direction],
     ["Wind angle", fields.wind_angle == null ? null : `${fields.wind_angle}°`],
   ].filter(([label, value]) => label && value != null && value !== "");
   return (
