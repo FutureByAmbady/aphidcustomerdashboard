@@ -1,5 +1,5 @@
 const DETECTION_COLUMNS = 'device_id,captured_at,insect_count,result_image_url,original_image_url';
-const TELEMETRY_COLUMNS = 'device_id,recorded_at,battery_percent,battery_voltage,wind_direction,wind_angle,status';
+const TELEMETRY_COLUMNS = 'id,device_id,recorded_at,wind_direction,wind_angle,previous_position,target_position,motor_direction,movement,required_pulses,actual_pulses,final_position,status,battery_percent,battery_voltage';
 
 function envValue(env, ...names) {
   for (const name of names) {
@@ -91,6 +91,110 @@ async function querySupabase(env, table, params) {
   return response.json();
 }
 
+const WIND_PAGE_SIZE = 500;
+const COMPASS_DIRECTIONS = new Set(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']);
+const WIND_HISTORY_COLUMNS = ['recorded_at', 'wind_direction', 'wind_angle', 'previous_position', 'target_position', 'motor_direction', 'movement', 'required_pulses', 'actual_pulses', 'final_position', 'status', 'battery_percent', 'battery_voltage'];
+
+function isValidWindReading(row) {
+  const direction = String(row.wind_direction ?? '').trim().toUpperCase();
+  const angle = row.wind_angle;
+  return COMPASS_DIRECTIONS.has(direction)
+    && angle !== null
+    && angle !== undefined
+    && angle !== ''
+    && Number.isFinite(Number(angle))
+    && Number(angle) >= 0
+    && Number(angle) <= 360;
+}
+
+function hourlySlotKey(value, timezone) {
+  const timestamp = parseTimestamp(value);
+  if (!timestamp) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(timestamp).reduce((result, part) => {
+    if (part.type !== 'literal') result[part.type] = part.value;
+    return result;
+  }, {});
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}`;
+}
+
+export function mergeWindRows(primaryRows, backupRows, timezone = 'Asia/Kolkata') {
+  const primaryBySlot = new Map();
+  const backupBySlot = new Map();
+  const addRows = (rows, target) => {
+    for (const row of rows || []) {
+      const timestamp = parseTimestamp(row.recorded_at);
+      const slot = hourlySlotKey(row.recorded_at, timezone);
+      if (!timestamp || !slot) continue;
+      if (!target.has(slot)) target.set(slot, []);
+      target.get(slot).push({ ...row, _timestamp: timestamp.getTime() });
+    }
+  };
+  addRows(primaryRows, primaryBySlot);
+  addRows(backupRows, backupBySlot);
+
+  const selected = [];
+  for (const [slot, primary] of primaryBySlot) {
+    const validPrimary = primary.filter(isValidWindReading);
+    if (validPrimary.length) {
+      selected.push(...primary);
+      continue;
+    }
+    const validBackup = (backupBySlot.get(slot) || []).filter(isValidWindReading);
+    if (validBackup.length) selected.push(...validBackup);
+  }
+  for (const [slot, backup] of backupBySlot) {
+    if (!primaryBySlot.has(slot)) selected.push(...backup.filter(isValidWindReading));
+  }
+
+  return selected
+    .sort((a, b) => b._timestamp - a._timestamp || Number(b.id || 0) - Number(a.id || 0))
+    .map((row) => {
+      const result = { recorded_at: new Date(row._timestamp).toISOString() };
+      for (const key of WIND_HISTORY_COLUMNS.slice(1)) result[key] = row[key] ?? null;
+      return result;
+    });
+}
+
+async function queryWindSource(env, table, baseParams) {
+  const rows = [];
+  let offset = 0;
+  try {
+    while (true) {
+      const params = new URLSearchParams(baseParams);
+      params.set('limit', String(WIND_PAGE_SIZE));
+      params.set('offset', String(offset));
+      const page = await querySupabase(env, table, params);
+      if (!Array.isArray(page)) throw new Error(`Unexpected response from ${table}.`);
+      rows.push(...page);
+      if (page.length < WIND_PAGE_SIZE) return { rows, failed: false };
+      offset += page.length;
+    }
+  } catch (error) {
+    return { rows, failed: true };
+  }
+}
+
+async function queryWindSources(env, params) {
+  const [primary, backup] = await Promise.all([
+    queryWindSource(env, 'wind_data', params),
+    queryWindSource(env, 'wind_operation_logs', params),
+  ]);
+  const warnings = [];
+  if (primary.failed) warnings.push('Primary wind_data could not be loaded completely.');
+  if (backup.failed) warnings.push('Fallback wind_operation_logs could not be loaded completely.');
+  return {
+    rows: mergeWindRows(primary.rows, backup.rows, envValue(env, 'DASHBOARD_TIMEZONE') || 'Asia/Kolkata'),
+    warnings,
+  };
+}
+
 function activitySummary(currentRows, previousRows) {
   const currentTotal = currentRows.reduce((sum, row) => sum + integerCount(row.insect_count), 0);
   const previousTotal = previousRows.reduce((sum, row) => sum + integerCount(row.insect_count), 0);
@@ -171,21 +275,14 @@ export async function onRequestGet(context) {
       select: TELEMETRY_COLUMNS,
       device_id: `eq.${deviceId}`,
       recorded_at: `gte.${currentStart.toISOString()}`,
-      order: 'recorded_at.desc',
-      limit: String(Math.min(5000, windOffset + windLimit + 1)),
+      order: 'recorded_at.desc,id.desc',
     });
     telemetryParams.append('recorded_at', `lt.${tomorrowStart.toISOString()}`);
-    const telemetryRows = await querySupabase(env, 'wind_data', telemetryParams);
-    const telemetry = telemetryRows[0];
+    const windSources = await queryWindSources(env, telemetryParams);
+    const telemetryRows = windSources.rows;
+    const telemetry = telemetryRows.find(isValidWindReading) || telemetryRows[0] || null;
     const windPageRows = telemetryRows.slice(windOffset, windOffset + windLimit);
-    const windHistory = windPageRows.filter((row) => parseTimestamp(row.recorded_at)).map((row) => ({
-      recorded_at: parseTimestamp(row.recorded_at).toISOString(),
-      wind_direction: row.wind_direction ?? null,
-      wind_angle: row.wind_angle ?? null,
-      status: row.status ?? null,
-      battery_percent: row.battery_percent ?? null,
-      battery_voltage: row.battery_voltage ?? null,
-    }));
+    const windHistory = windPageRows;
     const recordedAt = parseTimestamp(telemetry?.recorded_at);
     const ageMinutes = recordedAt ? (now.getTime() - recordedAt.getTime()) / 60000 : null;
     const fields = {};
@@ -207,6 +304,7 @@ export async function onRequestGet(context) {
       },
       trend: Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => ({ date, count })),
       wind_history: windHistory,
+      wind_history_warning: windSources.warnings.length ? windSources.warnings.join(' ') : null,
       wind_history_offset: windOffset,
       wind_history_limit: windLimit,
       wind_history_has_more: telemetryRows.length > windOffset + windLimit,

@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import logging
+import math
 import os
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -73,7 +74,16 @@ DETECTION_COLUMNS = (
     "device_id,captured_at,insect_count,result_image_url,original_image_url"
 )
 TELEMETRY_COLUMNS = (
-    "device_id,recorded_at,battery_percent,battery_voltage,wind_direction,wind_angle"
+    "id,device_id,recorded_at,wind_direction,wind_angle,previous_position,target_position,"
+    "motor_direction,movement,required_pulses,actual_pulses,final_position,status,"
+    "battery_percent,battery_voltage"
+)
+WIND_PAGE_SIZE = 1000
+COMPASS_DIRECTIONS = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
+WIND_HISTORY_COLUMNS = (
+    "wind_direction", "wind_angle", "previous_position", "target_position",
+    "motor_direction", "movement", "required_pulses", "actual_pulses",
+    "final_position", "status", "battery_percent", "battery_voltage",
 )
 
 
@@ -100,6 +110,109 @@ def parse_timestamp(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def is_valid_wind_reading(row: dict[str, Any]) -> bool:
+    direction = str(row.get("wind_direction") or "").strip().upper()
+    angle = row.get("wind_angle")
+    try:
+        numeric_angle = float(angle)
+    except (TypeError, ValueError):
+        return False
+    return direction in COMPASS_DIRECTIONS and 0 <= numeric_angle <= 360 and math.isfinite(numeric_angle)
+
+
+def hourly_slot_key(value: Any) -> str | None:
+    timestamp = parse_timestamp(value)
+    if not timestamp:
+        return None
+    return timestamp.astimezone(DISPLAY_TZ).strftime("%Y-%m-%dT%H")
+
+
+def merge_wind_rows(
+    primary_rows: list[dict[str, Any]],
+    backup_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    primary_by_slot: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    backup_by_slot: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for rows, target in ((primary_rows, primary_by_slot), (backup_rows, backup_by_slot)):
+        for row in rows:
+            slot = hourly_slot_key(row.get("recorded_at"))
+            if slot:
+                target[slot].append(row)
+
+    selected: list[dict[str, Any]] = []
+    for slot, primary in primary_by_slot.items():
+        valid_primary = [row for row in primary if is_valid_wind_reading(row)]
+        if valid_primary:
+            selected.extend(primary)
+            continue
+        valid_backup = [row for row in backup_by_slot.get(slot, []) if is_valid_wind_reading(row)]
+        selected.extend(valid_backup)
+    for slot, backup in backup_by_slot.items():
+        if slot not in primary_by_slot:
+            selected.extend(row for row in backup if is_valid_wind_reading(row))
+
+    selected.sort(
+        key=lambda row: (
+            parse_timestamp(row.get("recorded_at")) or datetime.min.replace(tzinfo=timezone.utc),
+            int(row.get("id") or 0),
+        ),
+        reverse=True,
+    )
+    return [
+        {
+            "recorded_at": iso(parse_timestamp(row.get("recorded_at"))),
+            **{key: row.get(key) for key in WIND_HISTORY_COLUMNS},
+        }
+        for row in selected
+    ]
+
+
+def read_wind_source(
+    client: Client,
+    table: str,
+    start: datetime,
+    end: datetime,
+) -> tuple[list[dict[str, Any]], bool]:
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    try:
+        while True:
+            response = (
+                client.table(table)
+                .select(TELEMETRY_COLUMNS)
+                .eq("device_id", DEVICE_ID)
+                .gte("recorded_at", start.isoformat())
+                .lt("recorded_at", end.isoformat())
+                .order("recorded_at", desc=True)
+                .order("id", desc=True)
+                .range(offset, offset + WIND_PAGE_SIZE - 1)
+                .execute()
+            )
+            page = response.data or []
+            rows.extend(page)
+            if len(page) < WIND_PAGE_SIZE:
+                return rows, False
+            offset += len(page)
+    except Exception:
+        logger.warning("Wind source query failed for %s; keeping any rows fetched before failure", table, exc_info=True)
+        return rows, True
+
+
+def read_wind_sources(
+    start: datetime,
+    end: datetime,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    client = require_supabase()
+    primary, primary_failed = read_wind_source(client, "wind_data", start, end)
+    backup, backup_failed = read_wind_source(client, "wind_operation_logs", start, end)
+    warnings = []
+    if primary_failed:
+        warnings.append("Primary wind_data could not be loaded completely.")
+    if backup_failed:
+        warnings.append("Fallback wind_operation_logs could not be loaded completely.")
+    return merge_wind_rows(primary, backup), warnings
 
 
 def local_day_bounds(day: date) -> tuple[datetime, datetime]:
@@ -209,33 +322,41 @@ def activity_summary(current_rows: list[dict[str, Any]], previous_rows: list[dic
     }
 
 
-def read_health() -> dict[str, Any]:
+def read_latest_wind_sources() -> tuple[dict[str, Any] | None, list[str]]:
     client = require_supabase()
-    try:
-        response = (
-            client.table("wind_data")
-            .select(TELEMETRY_COLUMNS)
-            .eq("device_id", DEVICE_ID)
-            .order("recorded_at", desc=True)
-            .limit(1)
-            .execute()
-        )
-        row = (response.data or [None])[0]
-    except Exception:
-        logger.warning("Telemetry query failed", exc_info=True)
-        return {
-            "available": False,
-            "status": "unknown",
-            "last_communication": None,
-            "fields": {},
-        }
+    source_rows: dict[str, list[dict[str, Any]]] = {}
+    warnings: list[str] = []
+    for table in ("wind_data", "wind_operation_logs"):
+        try:
+            response = (
+                client.table(table)
+                .select(TELEMETRY_COLUMNS)
+                .eq("device_id", DEVICE_ID)
+                .order("recorded_at", desc=True)
+                .order("id", desc=True)
+                .limit(WIND_PAGE_SIZE)
+                .execute()
+            )
+            source_rows[table] = response.data or []
+        except Exception:
+            logger.warning("Latest wind query failed for %s", table, exc_info=True)
+            source_rows[table] = []
+            warnings.append(f"{table} could not be loaded for latest telemetry.")
+    merged = merge_wind_rows(source_rows["wind_data"], source_rows["wind_operation_logs"])
+    return (merged[0] if merged else None), warnings
 
+
+def read_health(row: dict[str, Any] | None = None) -> dict[str, Any]:
+    warnings: list[str] = []
+    if row is None:
+        row, warnings = read_latest_wind_sources()
     if not row:
         return {
             "available": False,
             "status": "unknown",
             "last_communication": None,
             "fields": {},
+            "source_warnings": warnings,
         }
 
     recorded_at = parse_timestamp(row.get("recorded_at"))
@@ -244,7 +365,7 @@ def read_health() -> dict[str, Any]:
         age_minutes = (datetime.now(timezone.utc) - recorded_at).total_seconds() / 60
     status = "online" if age_minutes is not None and age_minutes <= OFFLINE_THRESHOLD_MINUTES else "offline"
     fields: dict[str, Any] = {}
-    for key in ("battery_percent", "battery_voltage", "wind_direction", "wind_angle"):
+    for key in ("battery_percent", "battery_voltage", "wind_direction", "wind_angle", "status"):
         if row.get(key) is not None:
             fields[key] = row[key]
     return {
@@ -252,6 +373,7 @@ def read_health() -> dict[str, Any]:
         "status": status,
         "last_communication": iso(recorded_at),
         "fields": fields,
+        "source_warnings": warnings,
     }
 
 
@@ -265,6 +387,8 @@ def dashboard(
     period: int = Query(default=7, ge=1, le=30),
     history_offset: int = Query(default=0, ge=0),
     history_limit: int = Query(default=5, ge=1, le=50),
+    wind_offset: int = Query(default=0, ge=0),
+    wind_limit: int = Query(default=5, ge=1, le=50),
 ) -> dict[str, Any]:
     now_local = datetime.now(DISPLAY_TZ)
     today = now_local.date()
@@ -318,7 +442,11 @@ def dashboard(
         if (timestamp := parse_timestamp(row.get("captured_at")))
         and timestamp.astimezone(DISPLAY_TZ).date() == today
     ]
-    health_data = read_health()
+    wind_rows, wind_warnings = read_wind_sources(current_start_utc, tomorrow_start_utc)
+    wind_history = wind_rows[wind_offset:wind_offset + wind_limit]
+    latest_wind = next((row for row in wind_rows if is_valid_wind_reading(row)), None)
+    health_data = read_health(latest_wind)
+    wind_warnings = list(dict.fromkeys(wind_warnings + health_data.get("source_warnings", [])))
     return {
         "trap_name": TRAP_NAME,
         "device_id": DEVICE_ID,
@@ -332,6 +460,11 @@ def dashboard(
             "last_detection": latest,
         },
         "trend": trend,
+        "wind_history": wind_history,
+        "wind_history_warning": " ".join(wind_warnings) if wind_warnings else None,
+        "wind_history_offset": wind_offset,
+        "wind_history_limit": wind_limit,
+        "wind_history_has_more": wind_offset + wind_limit < len(wind_rows),
         "latest_detection": latest,
         "recent_detections": recent,
         "history_offset": history_offset,

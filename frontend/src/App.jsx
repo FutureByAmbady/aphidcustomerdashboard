@@ -111,6 +111,7 @@ function App() {
         ...current,
         ...payload,
         wind_history: [...(current?.wind_history || []), ...(payload.wind_history || [])],
+        wind_history_warning: [...new Set([current?.wind_history_warning, payload.wind_history_warning].filter(Boolean))].join(' ') || null,
       }));
     } catch (requestError) {
       setError(requestError.message || "Unable to load more wind history.");
@@ -139,6 +140,7 @@ function App() {
             <button className="text-button" onClick={() => loadDashboard()}>Try again</button>
           </div>
         )}
+        {data?.wind_history_warning && <div className="alert error-alert" role="status">Wind history may be incomplete: {data.wind_history_warning}</div>}
         {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} loadingMore={loadingMore} onLoadMoreWind={loadMoreWindHistory} loadingMoreWind={loadingMoreWind} />}
       </main>
       <footer className="footer">Sickle Innovations Pvt Ltd · Smart Aphid Monitoring · Read-only customer view</footer>
