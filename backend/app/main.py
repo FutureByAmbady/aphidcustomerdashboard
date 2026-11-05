@@ -162,7 +162,7 @@ def wind_page(device_id: str, start: datetime, end: datetime, offset: int, limit
     client = require_wind_supabase()
     columns = CUSTOMER_WIND_COLUMNS if customer_view else TELEMETRY_COLUMNS
     def load():
-        query = client.table("wind_operation_logs").select(columns)
+        query = client.table("wind_data").select(columns)
         if device_id:
             query = query.eq("device_id", device_id)
         return (query.gte("recorded_at", start.isoformat()).lt("recorded_at", end.isoformat())
@@ -171,7 +171,7 @@ def wind_page(device_id: str, start: datetime, end: datetime, offset: int, limit
     try:
         rows = cached_metadata((client, "wind", device_id, start, end, offset, limit, columns), load)
         return {"rows": rows[:limit], "has_more": len(rows) > limit, "offset": offset,
-                "limit": limit, "source": "wind_operation_logs"}
+                "limit": limit, "source": "wind_data"}
     except Exception as exc:
         logger.warning("Wind operation log query failed", exc_info=True)
         raise HTTPException(status_code=502, detail="Unable to load wind operation logs right now.") from exc
@@ -192,7 +192,7 @@ def wind_history(
         try:
             index = 0
             while True:
-                page = (require_wind_supabase().table("wind_operation_logs").select("device_id")
+                page = (require_wind_supabase().table("wind_data").select("device_id")
                         .order("device_id").order("id").range(index, index + 999).execute()).data or []
                 devices.update(str(row["device_id"]) for row in page if row.get("device_id"))
                 if len(page) < 1000:
@@ -389,7 +389,7 @@ def read_latest_wind_sources() -> tuple[dict[str, Any] | None, dict[str, Any] | 
     try:
         client = require_wind_supabase()
         def load():
-            return (client.table("wind_operation_logs").select(CUSTOMER_WIND_COLUMNS)
+            return (client.table("wind_data").select(CUSTOMER_WIND_COLUMNS)
                     .eq("device_id", DEVICE_ID).order("recorded_at", desc=True).order("id", desc=True)
                     .limit(1).execute()).data or []
         latest = (cached_metadata((client, "latest-wind", DEVICE_ID), load) or [None])[0]

@@ -107,7 +107,7 @@ function imageEnvironment(env) {
 
 export async function queryWind(env, params) {
   return querySupabase({ SUPABASE_URL: envValue(env, 'WIND_SUPABASE_URL'),
-    SUPABASE_KEY: envValue(env, 'WIND_SUPABASE_SECRET_KEY') }, 'wind_operation_logs', params);
+    SUPABASE_KEY: envValue(env, 'WIND_SUPABASE_SECRET_KEY') }, 'wind_data', params);
 }
 
 export function windBounds(startDate, endDate, timezone = 'Asia/Kolkata') {
@@ -130,7 +130,7 @@ export async function windPage(env, deviceId, start, end, offset, limit, custome
   params.append('recorded_at', 'lt.' + end.toISOString());
   const rows = await queryWind(env, params);
   if (!Array.isArray(rows)) throw new Error('Unexpected wind response.');
-  return { rows: rows.slice(0, limit).map(row => Object.fromEntries(columns.split(',').map(key => [key, row[key] ?? null]))), has_more: rows.length > limit, offset, limit, source: 'wind_operation_logs' };
+  return { rows: rows.slice(0, limit).map(row => Object.fromEntries(columns.split(',').map(key => [key, row[key] ?? null]))), has_more: rows.length > limit, offset, limit, source: 'wind_data' };
 }
 
 export async function windDevices(env) {

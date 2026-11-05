@@ -34,6 +34,14 @@ export default function WindHistory({ apiBase, timezone = 'Asia/Kolkata' }) {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [apiBase, offset, retry]);
+  // Refresh only the small first page, not the expanded history or hidden tabs.
+  useEffect(() => {
+    if (offset !== 0) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'hidden') setRetry(value => value + 1);
+    }, 300000);
+    return () => clearInterval(timer);
+  }, [offset]);
   return <section className="panel wind-history-panel" aria-label="Wind operation history">
     <div className="panel-heading"><h3>Wind history</h3></div>
     {error && <div className="alert error-alert" role="alert">{error}<button className="text-button" onClick={() => setRetry(value => value + 1)}>Retry wind history</button></div>}
