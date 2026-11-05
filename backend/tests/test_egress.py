@@ -14,7 +14,7 @@ class EgressTests(ImagesTests):
         self.assertEqual(response.status_code, 200)
         result = response.json()
         self.assertEqual(len(result['rows']), 2); self.assertTrue(result['has_more'])
-        self.assertIn('/thumbnails/v1/a.jpg', result['rows'][0]['thumbnail_url'])
+        self.assertIn('/thumbnails/v2/a.jpg', result['rows'][0]['thumbnail_url'])
         self.assertIn(('range', (4, 6), {}), self.images.calls)
         self.assertIn(('select', (main.DETECTION_COLUMNS,), {}), self.images.calls)
         count = len(self.images.calls)
@@ -34,6 +34,6 @@ class EgressTests(ImagesTests):
         with patch.object(main, 'monotonic', return_value=0):
             value=main.cached_metadata(('test',),loader); value[0]['id']=9
             self.assertEqual(main.cached_metadata(('test',),loader)[0]['id'],1)
-        with patch.object(main, 'monotonic', return_value=61):
+        with patch.object(main, 'monotonic', return_value=301):
             main.cached_metadata(('test',),loader)
         self.assertEqual(loader.call_count,2)

@@ -1,6 +1,6 @@
 import { windBounds, windPage, windDevices } from './dashboard.js';
 const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' };
-const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers });
+const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...headers, ...(status === 200 ? { 'Cache-Control': 'public, max-age=60, s-maxage=300' } : {}) } });
 export async function onRequestGet({ request, env }) {
   const params = new URL(request.url).searchParams;
   const offsetText = params.get('offset') ?? '0';
@@ -13,7 +13,7 @@ export async function onRequestGet({ request, env }) {
   catch (error) { return json({ detail: error.message }, 400); }
   if (!env.WIND_SUPABASE_URL || !env.WIND_SUPABASE_SECRET_KEY) return json({ detail: 'Wind operation logs are not configured on this server.' }, 503);
   try {
-    const result = await windPage(env, deviceId, start, end, offset, limit);
+    const result = await windPage(env, deviceId, start, end, offset, limit, params.get('customer_view') === 'true');
     if (params.get('include_devices') === 'true') {
       try { result.devices = await windDevices(env); }
       catch { result.devices = []; result.warning = 'Device options could not be loaded. Operation records are still shown.'; }

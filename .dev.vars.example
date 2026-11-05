@@ -6,3 +6,17 @@ DASHBOARD_TRAP_NAME=Trap 001
 DASHBOARD_TIMEZONE=Asia/Kolkata
 OFFLINE_THRESHOLD_MINUTES=15
 MAX_DETECTIONS=5000
+
+# Sticky sheet registration: keep disabled until migration and Pi acknowledgement are ready.
+STICKY_SHEET_REPLACEMENT_ENABLED=false
+# Server-side per-device customer replacement key. Never use a VITE_ variable.
+STICKY_SHEET_REPLACEMENT_TOKEN=
+
+# Optional server-only image/detection project. Leave BOTH blank to use legacy SUPABASE_*.
+# Set both together; never expose the secret through VITE_* or browser assets.
+IMAGE_SUPABASE_URL=
+IMAGE_SUPABASE_SECRET_KEY=
+
+# Wind operations use this dedicated server-only project (no legacy fallback).
+WIND_SUPABASE_URL=
+WIND_SUPABASE_SECRET_KEY=

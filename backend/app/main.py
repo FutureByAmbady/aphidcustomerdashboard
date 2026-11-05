@@ -13,7 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import Client, create_client
 
@@ -95,6 +95,7 @@ app.add_middleware(
 DETECTION_COLUMNS = (
     "id,device_id,captured_at,insect_count,result_image_url,original_image_url,average_confidence,processing_status"
 )
+CUSTOMER_WIND_COLUMNS = "id,device_id,recorded_at,wind_direction,wind_angle,status,battery_percent,battery_voltage"
 TELEMETRY_COLUMNS = (
     "id,device_id,recorded_at,wind_direction,wind_angle,previous_position,target_position,"
     "motor_direction,movement,required_pulses,actual_pulses,final_position,status,"
@@ -157,16 +158,18 @@ def wind_bounds(start_date: str | None, end_date: str | None) -> tuple[datetime,
     return local_day_bounds(first)[0], local_day_bounds(last)[1]
 
 
-def wind_page(device_id: str, start: datetime, end: datetime, offset: int, limit: int) -> dict[str, Any]:
+def wind_page(device_id: str, start: datetime, end: datetime, offset: int, limit: int, customer_view: bool = False) -> dict[str, Any]:
     client = require_wind_supabase()
-    try:
-        query = client.table("wind_operation_logs").select(TELEMETRY_COLUMNS)
+    columns = CUSTOMER_WIND_COLUMNS if customer_view else TELEMETRY_COLUMNS
+    def load():
+        query = client.table("wind_operation_logs").select(columns)
         if device_id:
             query = query.eq("device_id", device_id)
-        response = (query.gte("recorded_at", start.isoformat()).lt("recorded_at", end.isoformat())
-                    .order("recorded_at", desc=True).order("id", desc=True)
-                    .range(offset, offset + limit).execute())
-        rows = response.data or []
+        return (query.gte("recorded_at", start.isoformat()).lt("recorded_at", end.isoformat())
+                .order("recorded_at", desc=True).order("id", desc=True)
+                .range(offset, offset + limit).execute()).data or []
+    try:
+        rows = cached_metadata((client, "wind", device_id, start, end, offset, limit, columns), load)
         return {"rows": rows[:limit], "has_more": len(rows) > limit, "offset": offset,
                 "limit": limit, "source": "wind_operation_logs"}
     except Exception as exc:
@@ -180,10 +183,10 @@ def wind_history(
     start_date: str | None = None, end_date: str | None = None,
     offset: int = Query(default=0, ge=0, le=1000000),
     limit: int = Query(default=20, ge=1, le=50),
-    include_devices: bool = False,
+    include_devices: bool = False, customer_view: bool = False,
 ) -> dict[str, Any]:
     start, end = wind_bounds(start_date, end_date)
-    result = wind_page(device_id.strip(), start, end, offset, limit)
+    result = wind_page(device_id.strip(), start, end, offset, limit, customer_view)
     if include_devices:
         devices: set[str] = set()
         try:
@@ -238,7 +241,7 @@ _metadata_cache: dict[tuple, tuple[float, Any]] = {}
 _metadata_lock = RLock()
 
 
-def cached_metadata(key: tuple, loader, ttl: int = 60):
+def cached_metadata(key: tuple, loader, ttl: int = 300):
     # Lock coalesces concurrent reads; no writes or errors are cached.
     with _metadata_lock:
         hit = _metadata_cache.get(key)
@@ -283,7 +286,7 @@ def thumbnail_url(value: str | None) -> str | None:
         return None
     bucket, path = tail.split("/", 1)
     path = re.sub(r"\.[^/.]+$", ".jpg", path)
-    return urlunsplit((parts.scheme, parts.netloc, prefix + marker + bucket + "/thumbnails/v1/" + path, "", ""))
+    return urlunsplit((parts.scheme, parts.netloc, prefix + marker + bucket + "/thumbnails/v2/" + path, "", ""))
 
 
 def public_image_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -384,10 +387,12 @@ def activity_summary(current_rows: list[dict[str, Any]], previous_rows: list[dic
 
 def read_latest_wind_sources() -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str]]:
     try:
-        response = (require_wind_supabase().table("wind_operation_logs").select(TELEMETRY_COLUMNS)
+        client = require_wind_supabase()
+        def load():
+            return (client.table("wind_operation_logs").select(CUSTOMER_WIND_COLUMNS)
                     .eq("device_id", DEVICE_ID).order("recorded_at", desc=True).order("id", desc=True)
-                    .limit(1).execute())
-        latest = (response.data or [None])[0]
+                    .limit(1).execute()).data or []
+        latest = (cached_metadata((client, "latest-wind", DEVICE_ID), load) or [None])[0]
         return latest, latest, []
     except Exception:
         return None, None, ["Wind operation logs could not be loaded for latest telemetry."]
@@ -442,6 +447,7 @@ def dashboard(
     history_limit: int = Query(default=5, ge=1, le=50),
     wind_offset: int = Query(default=0, ge=0),
     wind_limit: int = Query(default=5, ge=1, le=50),
+    include_wind_history: bool = True,
 ) -> dict[str, Any]:
     now_local = datetime.now(DISPLAY_TZ)
     today = now_local.date()
@@ -479,7 +485,7 @@ def dashboard(
     ]
     wind_warnings = []
     try:
-        wind_result = wind_page(DEVICE_ID, current_start_utc, tomorrow_start_utc, wind_offset, wind_limit)
+        wind_result = wind_page(DEVICE_ID, current_start_utc, tomorrow_start_utc, wind_offset, wind_limit) if include_wind_history else {"rows": [], "has_more": False}
     except HTTPException as exc:
         wind_result = {"rows": [], "has_more": False}
         wind_warnings.append(exc.detail)
@@ -515,3 +521,11 @@ def dashboard(
         "health": health_data,
     }
 
+
+
+@app.middleware("http")
+async def cache_read_metadata(request: Request, call_next):
+    response = await call_next(request)
+    if request.method == "GET" and request.url.path in ("/api/dashboard", "/api/images", "/api/wind"):
+        response.headers["Cache-Control"] = "public, max-age=60, s-maxage=300" if response.status_code == 200 else "no-store"
+    return response

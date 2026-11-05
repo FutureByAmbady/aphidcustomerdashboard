@@ -25,3 +25,12 @@ it('refreshes after five minutes, never at fifteen seconds, and skips hidden tab
   const hidden = vi.spyOn(document,'visibilityState','get').mockReturnValue('hidden');
   await act(async()=>{await vi.advanceTimersByTimeAsync(300000);}); expect(fetch).toHaveBeenCalledTimes(2); hidden.mockRestore();
 });
+it('loads a preview only for latest detection, not for history rows',async()=>{
+  const detection={...row(1),result_image_url:'https://images.invalid/full.jpg',result_thumbnail_url:'https://images.invalid/tiny.jpg'};
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({...payload,latest_detection:detection,recent_detections:[detection]}))));
+  render(<App/>);await screen.findByAltText('Detection result thumbnail');
+  expect(screen.getAllByAltText('Detection result thumbnail')).toHaveLength(1);
+  expect(screen.getByAltText('Detection result thumbnail').getAttribute('src')).toBe(detection.result_thumbnail_url);
+  expect(fetch.mock.calls[0][0]).toContain('include_wind_history=false');
+  expect(screen.queryByRole('heading',{name:'Image Sessions'})).toBeNull();
+});

@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export function ImageFrame({ detection, large = false }) {
   const [failed, setFailed] = useState([]);
+  // A refreshed metadata record can retry a preview whose background upload was pending.
+  useEffect(() => setFailed([]), [detection]);
   const preferred = detection?.result_thumbnail_url || detection?.thumbnail_url;
   // A missing result thumbnail may use the original thumbnail, never full size.
   const imageUrl = failed.includes(preferred) && detection?.thumbnail_url !== preferred

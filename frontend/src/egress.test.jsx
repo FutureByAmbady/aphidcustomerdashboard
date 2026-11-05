@@ -12,16 +12,16 @@ it('coalesces identical concurrent metadata reads and expires the cache',async()
   await Promise.all(Array.from({length:10},()=>cachedMetadata('same',loader)));
   expect(loader).toHaveBeenCalledTimes(1);
   await cachedMetadata('same',loader);expect(loader).toHaveBeenCalledTimes(1);
-  vi.advanceTimersByTime(60001);await cachedMetadata('same',loader);expect(loader).toHaveBeenCalledTimes(2);
+  vi.advanceTimersByTime(300001);await cachedMetadata('same',loader);expect(loader).toHaveBeenCalledTimes(2);
 });
 it('uses database date/device filters, narrow columns and limit+1 pagination; repeats are cached',async()=>{
   vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify([{id:1,original_image_url:'https://images.invalid/storage/v1/object/public/monitoring-images/a.png'},{id:2},{id:3}]))));
   const request=new Request('https://dashboard.invalid/api/images?start_date=2026-11-01&end_date=2026-11-02&offset=4&limit=2');
   const response=await onRequestGet({env,request});const data=await response.json();expect(data.rows).toHaveLength(2);expect(data.has_more).toBe(true);
-  expect(data.rows[0].thumbnail_url).toContain('/thumbnails/v1/a.jpg');
+  expect(data.rows[0].thumbnail_url).toContain('/thumbnails/v2/a.jpg');
   const url=new URL(fetch.mock.calls[0][0]);expect(url.searchParams.get('select')).not.toContain('*');expect(url.searchParams.get('offset')).toBe('4');expect(url.searchParams.get('limit')).toBe('3');expect(url.searchParams.get('device_id')).toBe('eq.PI5-001');
   expect(url.searchParams.getAll('captured_at')).toEqual(['gte.2026-10-31T18:30:00.000Z','lt.2026-11-02T18:30:00.000Z']);
-  await onRequestGet({env,request});expect(fetch).toHaveBeenCalledTimes(1);expect(response.headers.get('cache-control')).toContain('max-age=30');
+  await onRequestGet({env,request});expect(fetch).toHaveBeenCalledTimes(1);expect(response.headers.get('cache-control')).toContain('max-age=60');
 });
 it('rejects invalid pagination/date filters before querying',async()=>{
   vi.stubGlobal('fetch',vi.fn());
@@ -46,4 +46,23 @@ it('does not cache errors and isolates metadata by credentials',async()=>{
   vi.stubGlobal('fetch',vi.fn(async()=>new Response('[]')));
   const request=new Request('https://dashboard.invalid/api/images');
   await onRequestGet({env,request});await onRequestGet({env:{...env,IMAGE_SUPABASE_SECRET_KEY:'other-key'},request});expect(fetch).toHaveBeenCalledTimes(2);
+});
+it('queries only customer-visible wind fields and caches successful pages',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response('[]')));
+  const {onRequestGet:wind}=await import('../../functions/api/wind.js');
+  const windEnv={WIND_SUPABASE_URL:'https://wind.invalid',WIND_SUPABASE_SECRET_KEY:'test-key'};
+  const request=new Request('https://dashboard.invalid/api/wind?customer_view=true&limit=5');
+  const response=await wind({env:windEnv,request});await wind({env:windEnv,request});
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const select=new URL(fetch.mock.calls[0][0]).searchParams.get('select');
+  expect(select).toBe('id,device_id,recorded_at,wind_direction,wind_angle,status,battery_percent,battery_voltage');
+  expect(response.headers.get('cache-control')).toContain('s-maxage=300');
+});
+it('avoids duplicate embedded wind history while retaining latest health readings',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response('[]')));
+  const {onRequestGet:dashboard}=await import('../../functions/api/dashboard.js');
+  const response=await dashboard({env:{...env,WIND_SUPABASE_URL:'https://wind.invalid',WIND_SUPABASE_SECRET_KEY:'key'},request:new Request('https://dashboard.invalid/api/dashboard?include_wind_history=false')});
+  expect(response.status).toBe(200);
+  const windCalls=fetch.mock.calls.filter(([url])=>String(url).includes('/wind_operation_logs?'));
+  expect(windCalls).toHaveLength(1);expect(new URL(windCalls[0][0]).searchParams.get('limit')).toBe('1');
 });

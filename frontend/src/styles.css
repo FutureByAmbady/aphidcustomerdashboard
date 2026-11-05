@@ -383,3 +383,4 @@ h3 { font-size: 17px; line-height: 1.2; }
 .session-open:hover, .session-open:focus-visible { border-color: var(--green); }
 .wind-operation-table { table-layout: auto; }
 .wind-operation-table th, .wind-operation-table td { width: auto !important; white-space: normal !important; }
+

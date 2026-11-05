@@ -1,5 +1,6 @@
 import { cachedMetadata } from './metadata-cache.js';
 const DETECTION_COLUMNS = 'id,device_id,captured_at,insect_count,result_image_url,original_image_url,average_confidence,processing_status';
+const CUSTOMER_WIND_COLUMNS = 'id,device_id,recorded_at,wind_direction,wind_angle,status,battery_percent,battery_voltage';
 const TELEMETRY_COLUMNS = 'id,device_id,recorded_at,wind_direction,wind_angle,previous_position,target_position,motor_direction,movement,required_pulses,actual_pulses,final_position,status,battery_percent,battery_voltage';
 
 function envValue(env, ...names) {
@@ -67,7 +68,7 @@ function corsHeaders() {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Cache-Control': 'public, max-age=30, s-maxage=60',
+    'Cache-Control': 'public, max-age=60, s-maxage=300',
   };
 }
 
@@ -120,15 +121,16 @@ export function windBounds(startDate, endDate, timezone = 'Asia/Kolkata') {
   return [localMidnight(first, timezone), localMidnight(shiftDateKey(last, 1), timezone)];
 }
 
-export async function windPage(env, deviceId, start, end, offset, limit) {
-  const params = new URLSearchParams({ select: TELEMETRY_COLUMNS,
+export async function windPage(env, deviceId, start, end, offset, limit, customerView = false) {
+  const columns = customerView ? CUSTOMER_WIND_COLUMNS : TELEMETRY_COLUMNS;
+  const params = new URLSearchParams({ select: columns,
     recorded_at: 'gte.' + start.toISOString(), order: 'recorded_at.desc.nullslast,id.desc',
     offset: String(offset), limit: String(limit + 1) });
   if (deviceId) params.set('device_id', 'eq.' + deviceId);
   params.append('recorded_at', 'lt.' + end.toISOString());
   const rows = await queryWind(env, params);
   if (!Array.isArray(rows)) throw new Error('Unexpected wind response.');
-  return { rows: rows.slice(0, limit).map(row => Object.fromEntries(TELEMETRY_COLUMNS.split(',').map(key => [key, row[key] ?? null]))), has_more: rows.length > limit, offset, limit, source: 'wind_operation_logs' };
+  return { rows: rows.slice(0, limit).map(row => Object.fromEntries(columns.split(',').map(key => [key, row[key] ?? null]))), has_more: rows.length > limit, offset, limit, source: 'wind_operation_logs' };
 }
 
 export async function windDevices(env) {
@@ -157,7 +159,7 @@ export function thumbnailUrl(value) {
     const tail = url.pathname.slice(index + marker.length);
     const slash = tail.indexOf('/');
     if (slash < 0) return null;
-    url.pathname = url.pathname.slice(0, index) + marker + tail.slice(0, slash) + '/thumbnails/v1/' + tail.slice(slash + 1).replace(/\.[^/.]+$/, '.jpg');
+    url.pathname = url.pathname.slice(0, index) + marker + tail.slice(0, slash) + '/thumbnails/v2/' + tail.slice(slash + 1).replace(/\.[^/.]+$/, '.jpg');
     url.search = ''; url.hash = '';
     return url.toString();
   } catch { return null; }
@@ -282,7 +284,7 @@ export async function onRequestGet(context) {
     const windWarnings = [];
     let latestEvent = null;
     try {
-      windResult = await windPage(env, deviceId, currentStart, tomorrowStart, windOffset, windLimit);
+      if (url.searchParams.get('include_wind_history') !== 'false') windResult = await windPage(env, deviceId, currentStart, tomorrowStart, windOffset, windLimit);
       const latestRows = await queryWind(env, new URLSearchParams({ select: 'recorded_at,wind_direction,wind_angle,status,battery_percent,battery_voltage', device_id: 'eq.' + deviceId, order: 'recorded_at.desc.nullslast,id.desc', limit: '1' }));
       latestEvent = latestRows[0] || null;
     } catch { windWarnings.push('Wind operation logs could not be loaded.'); }

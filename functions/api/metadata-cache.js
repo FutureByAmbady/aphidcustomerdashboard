@@ -2,7 +2,7 @@
 // Cloudflare can start another isolate; a miss must always remain correct.
 const entries = new Map();
 const pending = new Map();
-const TTL_MS = 60000;
+const TTL_MS = 300000;
 export function clearMetadataCache() { entries.clear(); pending.clear(); }
 export async function cachedMetadata(key, loader, ttl = TTL_MS) {
   const hit = entries.get(key);

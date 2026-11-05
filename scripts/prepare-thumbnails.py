@@ -22,7 +22,7 @@ class NoRedirect(HTTPRedirectHandler):
 def thumbnail_path(path):
     if path.startswith('thumbnails/') or any(p in ('', '.', '..') for p in path.split('/')):
         raise ValueError('Not an original image path')
-    return 'thumbnails/v1/' + re.sub(r'\.[^/.]+$', '.jpg', path)
+    return 'thumbnails/v2/' + re.sub(r'\.[^/.]+$', '.jpg', path)
 
 
 def make_thumbnail(raw):
@@ -37,15 +37,19 @@ def make_thumbnail(raw):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--start-date', required=True)
-    parser.add_argument('--end-date', required=True)
+    parser.add_argument('--start-date')
+    parser.add_argument('--end-date')
+    parser.add_argument('--latest-only', action='store_true', help='Only the newest capture and its result (or original) preview; no date/archive scan.')
     parser.add_argument('--limit', type=int, default=20, choices=range(1, 51), metavar='1..50')
     parser.add_argument('--offset', type=int, default=0)
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
-    first, last = date.fromisoformat(args.start_date), date.fromisoformat(args.end_date)
-    if first > last or (last - first).days > 30 or not 0 <= args.offset <= 1000000:
-        parser.error('Use an ordered range of at most 31 days and a non-negative bounded offset.')
+    if not args.latest_only:
+        if not args.start_date or not args.end_date:
+            parser.error('Use --latest-only or supply both dates.')
+        first, last = date.fromisoformat(args.start_date), date.fromisoformat(args.end_date)
+        if first > last or (last - first).days > 30 or not 0 <= args.offset <= 1000000:
+            parser.error('Use an ordered range of at most 31 days and a non-negative bounded offset.')
     base = os.environ.get('IMAGE_SUPABASE_URL', '').rstrip('/')
     key = os.environ.get('IMAGE_SUPABASE_SECRET_KEY', '')
     bucket = os.environ.get('SUPABASE_BUCKET', 'monitoring-images')
@@ -54,11 +58,12 @@ def main():
     headers = {'apikey': key}
     if not key.startswith('sb_'):
         headers['Authorization'] = 'Bearer ' + key
-    # IST date bounds, inclusive dates, no full-archive traversal.
     params = [('select', 'original_image_url,result_image_url'), ('device_id', 'eq.' + os.environ.get('DASHBOARD_DEVICE_ID', 'PI5-001')),
-              ('captured_at', 'gte.' + first.isoformat() + 'T00:00:00+05:30'),
-              ('captured_at', 'lt.' + (last + timedelta(days=1)).isoformat() + 'T00:00:00+05:30'),
-              ('order', 'captured_at.desc,id.desc'), ('offset', str(args.offset)), ('limit', str(args.limit))]
+              ('order', 'captured_at.desc,id.desc'), ('offset', str(0 if args.latest_only else args.offset)),
+              ('limit', str(1 if args.latest_only else args.limit))]
+    if not args.latest_only:
+        params += [('captured_at', 'gte.' + first.isoformat() + 'T00:00:00+05:30'),
+                   ('captured_at', 'lt.' + (last + timedelta(days=1)).isoformat() + 'T00:00:00+05:30')]
     opener = build_opener(NoRedirect)
     def send(url, method='GET', data=None, extra=None):
         return opener.open(Request(url, data=data, method=method, headers={**headers, **(extra or {})}), timeout=30)
@@ -66,7 +71,8 @@ def main():
         rows = json.loads(response.read(MAX_BYTES))
     seen = set()
     for row in rows:
-        for field in ('original_image_url', 'result_image_url'):
+        fields = (('result_image_url',) if row.get('result_image_url') else ('original_image_url',)) if args.latest_only else ('original_image_url', 'result_image_url')
+        for field in fields:
             value = row.get(field)
             if not value:
                 continue
@@ -87,7 +93,7 @@ def main():
             encoded = quote(bucket + '/' + target, safe='/')
             target_url = base + '/storage/v1/object/' + encoded
             try:
-                with send(target_url, 'HEAD'):
+                with send(base + '/storage/v1/object/info/authenticated/' + encoded):
                     print('Already exists:', target)
                 continue
             except HTTPError as error:
@@ -109,8 +115,9 @@ def main():
                 raise ValueError('Image exceeds 25 MiB safety limit')
             data = make_thumbnail(raw)
             # POST with upsert disabled can create only the separate thumbnail.
-            with send(target_url, 'POST', data, {'Content-Type': 'image/jpeg', 'x-upsert': 'false', 'cache-control': '31536000'}):
+            with send(target_url, 'POST', data, {'Content-Type': 'image/jpeg', 'x-upsert': 'false', 'cache-control': 'max-age=31536000'}):
                 pass
+            print('Created preview:', len(data), 'bytes; source downloaded once:', len(raw), 'bytes')
 
 if __name__ == '__main__':
     main()

@@ -14,7 +14,7 @@ class ThumbnailTests(unittest.TestCase):
         self.assertEqual(original, stream.getvalue())
         self.assertLess(len(thumbnail), len(original))
     def test_separate_namespace_and_traversal_rejected(self):
-        self.assertEqual(module.thumbnail_path('device/a.png'), 'thumbnails/v1/device/a.jpg')
-        for path in ['thumbnails/v1/a.jpg','../a.jpg','device/../a.jpg','/a.jpg']:
+        self.assertEqual(module.thumbnail_path('device/a.png'), 'thumbnails/v2/device/a.jpg')
+        for path in ['thumbnails/v2/a.jpg','../a.jpg','device/../a.jpg','/a.jpg']:
             with self.assertRaises(ValueError): module.thumbnail_path(path)
 if __name__ == '__main__': unittest.main()

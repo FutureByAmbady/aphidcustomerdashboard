@@ -18,7 +18,7 @@ export default function WindHistory({ apiBase, timezone = 'Asia/Kolkata' }) {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError('');
-    const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    const params = new URLSearchParams({ offset: String(offset), limit: String(limit), customer_view: 'true' });
     fetch(apiBase + '/api/wind?' + params, { signal: controller.signal })
       .then(async response => {
         const payload = await response.json();
