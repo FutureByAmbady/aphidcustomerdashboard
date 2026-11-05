@@ -231,13 +231,13 @@ function Dashboard({ data, period, setPeriod, onLoadMore, onImageFilter, loading
         <SystemHealth health={data.health} timezone={data.timezone} />
       </section>
 
-      <StickySheet key={data.device_id} deviceId={data.device_id} apiBase={API_BASE_URL} timezone={data.timezone} />
-
       <section className="history-grid">
         <RecentDetections unavailable={data.image_warning} rows={data.recent_detections || []} timezone={data.timezone} hasMore={data.history_has_more} onLoadMore={onLoadMore} loadingMore={loadingMore} />
         <WindHistory apiBase={API_BASE_URL} timezone={data.timezone} />
       </section>
       <ImageSessions onFilter={onImageFilter} onLoadMore={onLoadMore} loadingMore={loadingMore} rows={data.image_records || data.recent_detections || []} timezone={data.timezone} warning={data.image_warning} truncated={data.image_records_truncated} period={period} />
+
+      <StickySheet key={data.device_id} deviceId={data.device_id} apiBase={API_BASE_URL} timezone={data.timezone} />
     </>
   );
 }
