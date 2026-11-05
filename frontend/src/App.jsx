@@ -77,7 +77,7 @@ function App() {
       if (!API_BASE_URL) {
         throw new Error("Monitoring service is not configured. Set VITE_API_BASE_URL and rebuild the frontend.");
       }
-      const response = await fetch(`${API_BASE_URL}/api/dashboard?period=${period}&include_wind_history=false`, { signal });
+      const response = await fetch(`${API_BASE_URL}/api/dashboard?period=${period}&include_wind_history=false&history_limit=4`, { signal });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.detail || "Unable to load monitoring data.");
       if (signal?.aborted) return;
@@ -99,7 +99,7 @@ function App() {
     setImageError("");
     try {
       const offset = reset ? 0 : imageOffset.current;
-      const params = new URLSearchParams({ period: String(period), offset: String(offset), limit: '20', ...dates });
+      const params = new URLSearchParams({ period: String(period), offset: String(offset), limit: '4', ...dates });
       const response = await fetch(`${API_BASE_URL}/api/images?${params}`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || 'Unable to load image history.');
@@ -129,7 +129,7 @@ function App() {
     // cadence only while visible; do not discard filtered/expanded history.
     const timer = setInterval(() => {
       if (document.visibilityState !== 'hidden' && !imageBusy.current &&
-          imageOffset.current <= 5 && !Object.keys(imageDates.current).length) loadDashboard(controller.signal);
+          imageOffset.current <= 4 && !Object.keys(imageDates.current).length) loadDashboard(controller.signal);
     }, 300000);
     return () => { controller.abort(); clearInterval(timer); };
   }, [loadDashboard]);
@@ -354,7 +354,7 @@ function RecentDetections({ unavailable, rows, timezone, hasMore, onLoadMore, lo
               </div>
             ))}
           </div>
-          {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button></div>}
+          {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Read more"}</button></div>}
         </>
       )}
     </section>
