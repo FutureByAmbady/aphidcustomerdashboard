@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import StickySheet from "./StickySheet.jsx";
 import WindHistory from "./WindHistory.jsx";
-import ImageSessions from "./ImageSessions.jsx";
 import { ImageFrame, ImageLinks } from "./ImagePreview.jsx";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, "");
@@ -118,7 +117,6 @@ function App() {
     finally { if (requestId === imageRequest.current) { setLoadingMore(false); imageBusy.current = false; } }
   }, [period]);
   const loadMoreHistory = () => loadImagePage(imageDates.current);
-  const filterImageHistory = dates => loadImagePage(dates, true);
 
   useEffect(() => {
     imageRequest.current += 1; imageBusy.current = false; imageDates.current = {}; imageOffset.current = 0;
@@ -151,7 +149,7 @@ function App() {
         )}
         {!data && <WindHistory apiBase={API_BASE_URL} timezone="Asia/Kolkata" />}
         {imageError && <div className="alert error-alert" role="alert">{imageError}</div>}
-        {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} onImageFilter={filterImageHistory} loadingMore={loadingMore} />}
+        {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} loadingMore={loadingMore} />}
       </main>
       <footer className="footer">Sickle Innovations Pvt Ltd · Smart Aphid Monitoring · Customer monitoring view</footer>
     </div>
@@ -182,7 +180,7 @@ function Header({ data, todayLabel }) {
   );
 }
 
-function Dashboard({ data, period, setPeriod, onLoadMore, onImageFilter, loadingMore }) {
+function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore }) {
   const kpis = data.kpis || {};
   const activity = kpis.activity || {};
   const latest = data.latest_detection;
@@ -235,7 +233,6 @@ function Dashboard({ data, period, setPeriod, onLoadMore, onImageFilter, loading
         <RecentDetections unavailable={data.image_warning} rows={data.recent_detections || []} timezone={data.timezone} hasMore={data.history_has_more} onLoadMore={onLoadMore} loadingMore={loadingMore} />
         <WindHistory apiBase={API_BASE_URL} timezone={data.timezone} />
       </section>
-      <ImageSessions onFilter={onImageFilter} onLoadMore={onLoadMore} loadingMore={loadingMore} rows={data.image_records || data.recent_detections || []} timezone={data.timezone} warning={data.image_warning} truncated={data.image_records_truncated} period={period} />
 
       <StickySheet key={data.device_id} deviceId={data.device_id} apiBase={API_BASE_URL} timezone={data.timezone} />
     </>
