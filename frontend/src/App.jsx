@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import WindHistory from "./WindHistory.jsx";
+import ImageSessions from "./ImageSessions.jsx";
+import { ImageFrame, ImageLinks } from "./ImagePreview.jsx";
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, "");
 
 function formatDate(value, timezone, withTime = true) {
@@ -59,7 +63,6 @@ function App() {
   const [state, setState] = useState("loading");
   const [error, setError] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
-  const [loadingMoreWind, setLoadingMoreWind] = useState(false);
 
   const loadDashboard = useCallback(async (signal) => {
     setState("loading");
@@ -99,27 +102,6 @@ function App() {
     }
   }, [data, loadingMore, period]);
 
-  const loadMoreWindHistory = useCallback(async () => {
-    if (!data?.wind_history_has_more || loadingMoreWind) return;
-    setLoadingMoreWind(true);
-    try {
-      const offset = data.wind_history?.length || 0;
-      const response = await fetch(`${API_BASE_URL}/api/dashboard?period=${period}&wind_offset=${offset}&wind_limit=5`);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.detail || "Unable to load more wind history.");
-      setData((current) => ({
-        ...current,
-        ...payload,
-        wind_history: [...(current?.wind_history || []), ...(payload.wind_history || [])],
-        wind_history_warning: [...new Set([current?.wind_history_warning, payload.wind_history_warning].filter(Boolean))].join(' ') || null,
-      }));
-    } catch (requestError) {
-      setError(requestError.message || "Unable to load more wind history.");
-    } finally {
-      setLoadingMoreWind(false);
-    }
-  }, [data, loadingMoreWind, period]);
-
   useEffect(() => {
     const controller = new AbortController();
     loadDashboard(controller.signal);
@@ -128,29 +110,30 @@ function App() {
 
   const todayLabel = useMemo(() => new Intl.DateTimeFormat("en-IN", { dateStyle: "full" }).format(new Date()), []);
 
-  if (state === "loading" && !data) return <LoadingScreen todayLabel={todayLabel} />;
+
 
   return (
     <div className="app-shell">
       <Header data={data} todayLabel={todayLabel} />
       <main className="page-content">
+        {state === "loading" && !data && <div className="empty-state" role="status">Loading monitoring data… Wind history loads independently below.</div>}
         {state === "error" && (
           <div className="alert error-alert" role="alert">
             <span>{error}</span>
             <button className="text-button" onClick={() => loadDashboard()}>Try again</button>
           </div>
         )}
-        {data?.wind_history_warning && <div className="alert error-alert" role="status">Wind history may be incomplete: {data.wind_history_warning}</div>}
-        {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} loadingMore={loadingMore} onLoadMoreWind={loadMoreWindHistory} loadingMoreWind={loadingMoreWind} />}
+        {!data && <WindHistory apiBase={API_BASE_URL} timezone="Asia/Kolkata" />}
+        {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} loadingMore={loadingMore} />}
       </main>
-      <footer className="footer">Sickle Innovations Pvt Ltd · Smart Aphid Monitoring · Read-only customer view</footer>
+      <footer className="footer">Sickle Innovations Pvt Ltd · Smart Aphid Monitoring · Customer monitoring view</footer>
     </div>
   );
 }
 
 function Header({ data, todayLabel }) {
   const status = data?.health?.status;
-  const statusLabel = status === "online" ? "Online" : status === "offline" ? "Offline" : "Telemetry unavailable";
+  const statusLabel = status === "online" ? "Online" : status === "offline" ? "Offline" : "Live connectivity unavailable";
   return (
     <header className="topbar">
       <div className="brand-block">
@@ -172,7 +155,7 @@ function Header({ data, todayLabel }) {
   );
 }
 
-function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore, onLoadMoreWind, loadingMoreWind }) {
+function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore }) {
   const kpis = data.kpis || {};
   const activity = kpis.activity || {};
   const latest = data.latest_detection;
@@ -182,11 +165,12 @@ function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore, onLoadMor
         <div>
           <p className="eyebrow">Monitoring overview</p>
           <h2>Trap activity at a glance</h2>
-          <p className="muted">Live results from the connected monitoring system.</p>
+          <p className="muted">Available detection records and historical wind operations.</p>
         </div>
         <div className="refresh-note">Updated {formatDate(data.generated_at, data.timezone)}</div>
       </section>
 
+      {data.image_warning && <div className="alert error-alert" role="alert">{data.image_warning}</div>}
       <section className="kpi-grid" aria-label="Monitoring summary">
         <KpiCard label="Aphids detected today" value={kpis.aphids_today} note="Today’s total from processed detections" />
         <KpiCard
@@ -196,7 +180,7 @@ function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore, onLoadMor
           tone={activity.direction}
         />
         <KpiCard label="Images analyzed" value={kpis.images_today} note="Processed detections today" />
-        <KpiCard label="Last detection" value={relativeTime(latest?.captured_at)} note={latest ? formatDate(latest.captured_at, data.timezone) : "No detections yet"} compact />
+        <KpiCard label="Last detection" value={data.image_warning ? "Unavailable" : relativeTime(latest?.captured_at)} note={latest ? formatDate(latest.captured_at, data.timezone) : "No detections yet"} compact />
       </section>
 
       <section className="panel trend-panel">
@@ -219,10 +203,12 @@ function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore, onLoadMor
         <SystemHealth health={data.health} timezone={data.timezone} />
       </section>
 
+
       <section className="history-grid">
-        <RecentDetections rows={data.recent_detections || []} timezone={data.timezone} hasMore={data.history_has_more} onLoadMore={onLoadMore} loadingMore={loadingMore} />
-        <WindHistory rows={data.wind_history || []} timezone={data.timezone} period={period} hasMore={data.wind_history_has_more} onLoadMore={onLoadMoreWind} loadingMore={loadingMoreWind} />
+        <RecentDetections unavailable={data.image_warning} rows={data.recent_detections || []} timezone={data.timezone} hasMore={data.history_has_more} onLoadMore={onLoadMore} loadingMore={loadingMore} />
+        <WindHistory apiBase={API_BASE_URL} timezone={data.timezone} />
       </section>
+      <ImageSessions rows={data.image_records || []} timezone={data.timezone} warning={data.image_warning} truncated={data.image_records_truncated} period={period} />
     </>
   );
 }
@@ -292,22 +278,6 @@ function LatestDetection({ detection, timezone }) {
   );
 }
 
-function ImageFrame({ detection, large = false }) {
-  const imageUrl = detection?.result_image_url || detection?.original_image_url || detection?.image_url;
-  if (!imageUrl) return <div className={`image-frame unavailable ${large ? "large" : ""}`}>Image unavailable</div>;
-  const label = detection?.result_image_url ? "Detection result" : "Original image";
-  return <div className={`image-frame ${large ? "large" : ""}`}><img src={imageUrl} alt={label} loading={large ? "eager" : "lazy"} onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.parentElement.classList.add("unavailable"); event.currentTarget.parentElement.append("Image unavailable"); }} /></div>;
-}
-
-function ImageLinks({ detection, compact = false }) {
-  const links = [];
-  if (detection?.result_image_url) links.push({ label: "View result", url: detection.result_image_url });
-  if (detection?.original_image_url && detection.original_image_url !== detection.result_image_url) links.push({ label: "View original", url: detection.original_image_url });
-  if (!links.length && detection?.image_url) links.push({ label: "View image", url: detection.image_url });
-  if (!links.length) return null;
-  return <div className={`image-links ${compact ? "compact" : ""}`}>{links.map((link) => <a key={link.label} className={compact ? "view-link" : "primary-button"} href={link.url} target="_blank" rel="noreferrer" aria-label={link.label}>{link.label}</a>)}</div>;
-}
-
 function SystemHealth({ health, timezone }) {
   const fields = health?.fields || {};
   const meaning = telemetryDisplay(fields.status, null);
@@ -324,9 +294,10 @@ function SystemHealth({ health, timezone }) {
       <div className="panel-heading"><div><p className="eyebrow">Device telemetry</p><h3>System health</h3></div></div>
       {!health?.available ? <EmptyState message="Telemetry unavailable." /> : (
         <>
-          <div className="health-status"><span className={`status-dot status-dot-${health.status}`} /><span>{health.status === "online" ? "Device online" : "Device offline"}</span></div>
+          <div className="health-status">Historical operation snapshot — connectivity unknown</div>
           <div className="health-list">
-            <HealthRow label="Last communication" value={formatDate(health.last_communication, timezone)} />
+            <HealthRow label="Last operation (IST)" value={formatDate(health.last_operation, timezone)} />
+            <p className="muted">{health.note}</p>
             {entries.map(([label, value]) => <HealthRow key={label} label={label} value={value} />)}
           </div>
         </>
@@ -337,30 +308,11 @@ function SystemHealth({ health, timezone }) {
 
 function HealthRow({ label, value }) { return <div className="health-row"><span>{label}</span><strong>{value}</strong></div>; }
 
-function WindHistory({ rows, timezone, period, hasMore, onLoadMore, loadingMore }) {
-  return (
-    <section className="panel wind-history-panel">
-      <div className="panel-heading"><div><p className="eyebrow">Device telemetry</p><h3>Wind &amp; device history</h3></div><span className="wind-history-note">Last {period === 1 ? "day" : `${period} days`}</span></div>
-      {!rows.length ? <EmptyState message="No wind readings available for this period." /> : (
-        <>
-        <div className="wind-table-wrap">
-          <table className="wind-table">
-            <thead><tr><th>Time</th><th>Direction</th><th>Angle</th><th>Battery</th><th>Voltage</th></tr></thead>
-            <tbody>{rows.map((row, index) => <tr key={`${row.recorded_at}-${index}`}><td><strong>{formatDate(row.recorded_at, timezone)}</strong><span className="table-muted">{relativeTime(row.recorded_at)}</span></td><td><span className={`telemetry-label telemetry-${telemetryDisplay(row.status, row.wind_direction).tone}`}>{telemetryDisplay(row.status, row.wind_direction).label}</span>{telemetryDisplay(row.status, row.wind_direction).secondary && <span className="table-muted">{telemetryDisplay(row.status, row.wind_direction).secondary}</span>}</td><td>{row.wind_angle == null ? "—" : `${row.wind_angle}°`}</td><td>{row.battery_percent == null ? "—" : `${row.battery_percent}%`}</td><td>{row.battery_voltage == null ? "—" : `${row.battery_voltage} V`}</td></tr>)}</tbody>
-          </table>
-        </div>
-        {hasMore && <div className="history-more"><button className="secondary-button" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button></div>}
-        </>
-      )}
-    </section>
-  );
-}
-
-function RecentDetections({ rows, timezone, hasMore, onLoadMore, loadingMore }) {
+function RecentDetections({ unavailable, rows, timezone, hasMore, onLoadMore, loadingMore }) {
   return (
     <section className="panel recent-panel">
-      <div className="panel-heading"><div><p className="eyebrow">History</p><h3>Recent detections</h3></div></div>
-      {!rows.length ? <EmptyState message="No detections recorded yet." /> : (
+      <div className="panel-heading"><div><p className="eyebrow">History</p><h3>Image History</h3></div></div>
+      {unavailable ? <EmptyState message="Image history unavailable. See the data-source notice above." /> : !rows.length ? <EmptyState message="No detections recorded yet." /> : (
         <>
           <div className="recent-list">
             {rows.map((row, index) => (
@@ -384,5 +336,3 @@ function EmptyState({ message }) { return <div className="empty-state">{message}
 function LoadingScreen({ todayLabel }) { return <div className="app-shell"><header className="topbar"><div className="brand-block"><img className="brand-logo" src="/brand/sickle-innovations-logo.png" alt="Sickle Innovations Pvt Ltd logo" /><div><p className="eyebrow">Sickle Innovations Pvt Ltd</p><h1>Smart Aphid Monitoring</h1></div></div><div className="header-meta"><div className="date-label">{todayLabel}</div><div className="status-pill status-unknown"><span className="status-dot" />Loading</div><div className="trap-label">Trap 001</div></div></header><main className="page-content"><div className="skeleton skeleton-intro" /><div className="kpi-grid">{[1, 2, 3, 4].map((item) => <div className="skeleton skeleton-card" key={item} />)}</div><div className="skeleton skeleton-chart" /><div className="skeleton skeleton-chart" /></main></div>; }
 
 export default App;
-
-

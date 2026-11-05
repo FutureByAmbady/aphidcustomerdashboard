@@ -338,3 +338,24 @@ h3 { font-size: 17px; line-height: 1.2; }
     padding-right: 12px;
   }
 }
+
+/* Wind-only controls preserve the surrounding monitoring layout. */
+.wind-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 0 0 12px; }
+.wind-filters label { display: flex; flex-direction: column; gap: 6px; color: var(--muted, #69766f); font-size: 12px; }
+.wind-filters input, .wind-filters select { min-height: 36px; max-width: 180px; border: 1px solid #dce5df; border-radius: 7px; padding: 6px 8px; background: white; color: #263c30; font: inherit; }
+.wind-source-note { font-size: 11px; color: #69766f; margin: 0 0 12px; }
+.wind-operation-table { min-width: 950px; }
+.telemetry-failure { color: #a42f2f; background: #fff0ee; }
+.wind-pagination { gap: 10px; align-items: center; font-size: 12px; flex-wrap: wrap; }
+
+/* Image sessions reuse the customer dashboard palette and responsive panels. */
+.image-sessions-panel { margin-top: 18px; }
+.session-image-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; }
+.session-image-card { padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); text-align: left; font: inherit; }
+.session-image-card .image-frame { width: 100%; height: 170px; margin-bottom: 12px; }
+.session-image-card p, .session-image-card span { font-size: 12px; line-height: 1.6; }
+.session-open { cursor: pointer; }
+.session-open strong, .session-open span { display: block; margin-top: 8px; }
+.session-open:hover, .session-open:focus-visible { border-color: var(--green); }
+.wind-operation-table { table-layout: auto; }
+.wind-operation-table th, .wind-operation-table td { width: auto !important; white-space: normal !important; }
