@@ -1,7 +1,11 @@
 ﻿from __future__ import annotations
 
+from copy import deepcopy
+from threading import RLock
+from time import monotonic
+from urllib.parse import urlsplit, urlunsplit
+import re
 import logging
-import math
 import os
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -12,6 +16,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import Client, create_client
+
+from .sticky_sheet import create_router
 
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -60,30 +66,39 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 else:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Images/detections may use a different project from legacy device/sticky-sheet data.
+# Fall back only when IMAGE_* is entirely absent, never mix project credentials.
+IMAGE_SUPABASE_URL = os.getenv("IMAGE_SUPABASE_URL", "").strip()
+IMAGE_SUPABASE_KEY = os.getenv("IMAGE_SUPABASE_SECRET_KEY", "").strip()
+image_supabase: Client | None = (
+    create_client(IMAGE_SUPABASE_URL, IMAGE_SUPABASE_KEY)
+    if IMAGE_SUPABASE_URL and IMAGE_SUPABASE_KEY else None
+)
+
+WIND_SUPABASE_URL = os.getenv("WIND_SUPABASE_URL", "").strip()
+WIND_SUPABASE_KEY = os.getenv("WIND_SUPABASE_SECRET_KEY", "").strip()
+wind_supabase: Client | None = (
+    create_client(WIND_SUPABASE_URL, WIND_SUPABASE_KEY)
+    if WIND_SUPABASE_URL and WIND_SUPABASE_KEY else None
+)
+
 app = FastAPI(title="Aphid Customer Dashboard API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
 DETECTION_COLUMNS = (
-    "device_id,captured_at,insect_count,result_image_url,original_image_url"
+    "id,device_id,captured_at,insect_count,result_image_url,original_image_url,average_confidence,processing_status"
 )
 TELEMETRY_COLUMNS = (
     "id,device_id,recorded_at,wind_direction,wind_angle,previous_position,target_position,"
     "motor_direction,movement,required_pulses,actual_pulses,final_position,status,"
     "battery_percent,battery_voltage"
-)
-WIND_PAGE_SIZE = 1000
-COMPASS_DIRECTIONS = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
-WIND_HISTORY_COLUMNS = (
-    "wind_direction", "wind_angle", "previous_position", "target_position",
-    "motor_direction", "movement", "required_pulses", "actual_pulses",
-    "final_position", "status", "battery_percent", "battery_voltage",
 )
 
 
@@ -94,6 +109,17 @@ def require_supabase() -> Client:
             detail="Monitoring data is not configured on this server.",
         )
     return supabase
+
+
+app.include_router(create_router(require_supabase, DEVICE_ID))
+
+
+def require_image_supabase() -> Client:
+    if not IMAGE_SUPABASE_URL and not IMAGE_SUPABASE_KEY:
+        return require_supabase()
+    if image_supabase is None:
+        raise HTTPException(status_code=503, detail="Image monitoring data is not configured on this server.")
+    return image_supabase
 
 
 def parse_timestamp(value: Any) -> datetime | None:
@@ -112,137 +138,68 @@ def parse_timestamp(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def normalize_telemetry_code(value: Any) -> str:
-    return "_".join(str(value or "").strip().upper().replace("-", " ").split())
+def require_wind_supabase() -> Client:
+    if wind_supabase is None:
+        raise HTTPException(status_code=503, detail="Wind operation logs are not configured on this server.")
+    return wind_supabase
 
 
-def is_valid_wind_reading(row: dict[str, Any]) -> bool:
-    direction = normalize_telemetry_code(row.get("wind_direction"))
-    status = normalize_telemetry_code(row.get("status"))
-    angle = row.get("wind_angle")
+def wind_bounds(start_date: str | None, end_date: str | None) -> tuple[datetime, datetime]:
+    today = datetime.now(DISPLAY_TZ).date()
     try:
-        numeric_angle = float(angle)
-    except (TypeError, ValueError):
-        return False
-    return (
-        direction in COMPASS_DIRECTIONS
-        and status not in {"DAILY_HOME", "POWER_FAIL_HOME", "POWER_FAILURE_HOME"}
-        and 0 <= numeric_angle <= 360
-        and math.isfinite(numeric_angle)
-    )
+        first = date.fromisoformat(start_date) if start_date else today - timedelta(days=6)
+        last = date.fromisoformat(end_date) if end_date else today
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Wind dates must use YYYY-MM-DD.") from exc
+    if ((start_date and first.isoformat() != start_date) or (end_date and last.isoformat() != end_date)
+            or first.year < 1900 or first > last or (last - first).days > 365 or last == date.max):
+        raise HTTPException(status_code=400, detail="Wind date range must be ordered, start in 1900 or later and be no longer than 366 days.")
+    return local_day_bounds(first)[0], local_day_bounds(last)[1]
 
 
-def hourly_slot_key(value: Any) -> str | None:
-    timestamp = parse_timestamp(value)
-    if not timestamp:
-        return None
-    return timestamp.astimezone(DISPLAY_TZ).strftime("%Y-%m-%dT%H")
-
-
-def wind_event_key(row: dict[str, Any]) -> tuple[str, ...]:
-    timestamp = parse_timestamp(row.get("recorded_at"))
-    angle = row.get("wind_angle")
+def wind_page(device_id: str, start: datetime, end: datetime, offset: int, limit: int) -> dict[str, Any]:
+    client = require_wind_supabase()
     try:
-        angle_key = str(float(angle)) if angle is not None and angle != "" else ""
-    except (TypeError, ValueError):
-        angle_key = str(angle)
-    return (
-        str(row.get("device_id") or ""), iso(timestamp) or "",
-        normalize_telemetry_code(row.get("wind_direction")), angle_key,
-        normalize_telemetry_code(row.get("status")), str(row.get("previous_position") if row.get("previous_position") is not None else ""),
-        str(row.get("target_position") if row.get("target_position") is not None else ""), normalize_telemetry_code(row.get("motor_direction")),
-        str(row.get("movement") if row.get("movement") is not None else ""), str(row.get("required_pulses") if row.get("required_pulses") is not None else ""),
-        str(row.get("actual_pulses") if row.get("actual_pulses") is not None else ""), str(row.get("final_position") if row.get("final_position") is not None else ""),
-        str(row.get("battery_percent") if row.get("battery_percent") is not None else ""), str(row.get("battery_voltage") if row.get("battery_voltage") is not None else ""),
-    )
+        query = client.table("wind_operation_logs").select(TELEMETRY_COLUMNS)
+        if device_id:
+            query = query.eq("device_id", device_id)
+        response = (query.gte("recorded_at", start.isoformat()).lt("recorded_at", end.isoformat())
+                    .order("recorded_at", desc=True).order("id", desc=True)
+                    .range(offset, offset + limit).execute())
+        rows = response.data or []
+        return {"rows": rows[:limit], "has_more": len(rows) > limit, "offset": offset,
+                "limit": limit, "source": "wind_operation_logs"}
+    except Exception as exc:
+        logger.warning("Wind operation log query failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Unable to load wind operation logs right now.") from exc
 
 
-def merge_wind_rows(
-    primary_rows: list[dict[str, Any]],
-    backup_rows: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    primary_by_slot: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    primary_valid_slots: set[str] = set()
-    for row in primary_rows:
-        slot = hourly_slot_key(row.get("recorded_at"))
-        if slot:
-            primary_by_slot[slot].append(row)
-            if is_valid_wind_reading(row):
-                primary_valid_slots.add(slot)
-
-    selected = [row for rows in primary_by_slot.values() for row in rows]
-    for row in backup_rows:
-        slot = hourly_slot_key(row.get("recorded_at"))
-        if not slot:
-            continue
-        if is_valid_wind_reading(row) and slot in primary_valid_slots:
-            continue
-        selected.append(row)
-
-    unique: dict[tuple[str, ...], dict[str, Any]] = {}
-    for row in selected:
-        unique.setdefault(wind_event_key(row), row)
-    selected = list(unique.values())
-    selected.sort(
-        key=lambda row: (
-            parse_timestamp(row.get("recorded_at")) or datetime.min.replace(tzinfo=timezone.utc),
-            int(row.get("id") or 0),
-        ),
-        reverse=True,
-    )
-    return [
-        {
-            "recorded_at": iso(parse_timestamp(row.get("recorded_at"))),
-            **{key: row.get(key) for key in WIND_HISTORY_COLUMNS},
-        }
-        for row in selected
-    ]
-
-
-def read_wind_source(
-    client: Client,
-    table: str,
-    start: datetime,
-    end: datetime,
-) -> tuple[list[dict[str, Any]], bool]:
-    rows: list[dict[str, Any]] = []
-    offset = 0
-    try:
-        while True:
-            response = (
-                client.table(table)
-                .select(TELEMETRY_COLUMNS)
-                .eq("device_id", DEVICE_ID)
-                .gte("recorded_at", start.isoformat())
-                .lt("recorded_at", end.isoformat())
-                .order("recorded_at", desc=True)
-                .order("id", desc=True)
-                .range(offset, offset + WIND_PAGE_SIZE - 1)
-                .execute()
-            )
-            page = response.data or []
-            rows.extend(page)
-            if len(page) < WIND_PAGE_SIZE:
-                return rows, False
-            offset += len(page)
-    except Exception:
-        logger.warning("Wind source query failed for %s; keeping any rows fetched before failure", table, exc_info=True)
-        return rows, True
-
-
-def read_wind_sources(
-    start: datetime,
-    end: datetime,
-) -> tuple[list[dict[str, Any]], list[str]]:
-    client = require_supabase()
-    primary, primary_failed = read_wind_source(client, "wind_data", start, end)
-    backup, backup_failed = read_wind_source(client, "wind_operation_logs", start, end)
-    warnings = []
-    if primary_failed:
-        warnings.append("Primary wind_data could not be loaded completely.")
-    if backup_failed:
-        warnings.append("Fallback wind_operation_logs could not be loaded completely.")
-    return merge_wind_rows(primary, backup), warnings
+@app.get("/api/wind")
+def wind_history(
+    device_id: str = Query(default="", max_length=128),
+    start_date: str | None = None, end_date: str | None = None,
+    offset: int = Query(default=0, ge=0, le=1000000),
+    limit: int = Query(default=20, ge=1, le=50),
+    include_devices: bool = False,
+) -> dict[str, Any]:
+    start, end = wind_bounds(start_date, end_date)
+    result = wind_page(device_id.strip(), start, end, offset, limit)
+    if include_devices:
+        devices: set[str] = set()
+        try:
+            index = 0
+            while True:
+                page = (require_wind_supabase().table("wind_operation_logs").select("device_id")
+                        .order("device_id").order("id").range(index, index + 999).execute()).data or []
+                devices.update(str(row["device_id"]) for row in page if row.get("device_id"))
+                if len(page) < 1000:
+                    break
+                index += len(page)
+            result["devices"] = sorted(devices)
+        except Exception:
+            result["devices"] = []
+            result["warning"] = "Device options could not be loaded. Operation records are still shown."
+    return result
 
 
 def local_day_bounds(day: date) -> tuple[datetime, datetime]:
@@ -277,26 +234,99 @@ def image_url(value: Any, client: Client) -> str | None:
         return None
 
 
+_metadata_cache: dict[tuple, tuple[float, Any]] = {}
+_metadata_lock = RLock()
+
+
+def cached_metadata(key: tuple, loader, ttl: int = 60):
+    # Lock coalesces concurrent reads; no writes or errors are cached.
+    with _metadata_lock:
+        hit = _metadata_cache.get(key)
+        if hit and hit[0] > monotonic():
+            return deepcopy(hit[1])
+        value = loader()
+        if len(_metadata_cache) >= 128:
+            _metadata_cache.pop(next(iter(_metadata_cache)))
+        _metadata_cache[key] = (monotonic() + ttl, deepcopy(value))
+        return value
+
+
 def read_detections(start: datetime, end: datetime) -> list[dict[str, Any]]:
-    client = require_supabase()
+    client = require_image_supabase()
+    def load():
+        rows = []
+        for offset in range(0, MAX_DETECTIONS, 1000):
+            size = min(1000, MAX_DETECTIONS - offset)
+            page = (client.table("detections").select("captured_at,insect_count")
+                    .eq("device_id", DEVICE_ID).gte("captured_at", start.isoformat())
+                    .lt("captured_at", end.isoformat()).order("captured_at", desc=True)
+                    .order("id", desc=True).range(offset, offset + size - 1).execute()).data or []
+            rows.extend(page)
+            if len(page) < size:
+                break
+        return rows
     try:
-        response = (
-            client.table("detections")
-            .select(DETECTION_COLUMNS)
-            .eq("device_id", DEVICE_ID)
-            .gte("captured_at", start.isoformat())
-            .lt("captured_at", end.isoformat())
-            .order("captured_at", desc=True)
-            .limit(MAX_DETECTIONS)
-            .execute()
-        )
-        return response.data or []
+        return cached_metadata((client, "summary", DEVICE_ID, start, end), load)
     except Exception as exc:
-        logger.exception("Detection query failed")
-        raise HTTPException(
-            status_code=502,
-            detail="Unable to load monitoring data right now.",
-        ) from exc
+        raise HTTPException(status_code=502, detail="Unable to load monitoring data right now.") from exc
+
+
+def thumbnail_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    parts = urlsplit(value)
+    marker = "/storage/v1/object/public/"
+    if parts.scheme not in ("http", "https") or marker not in parts.path:
+        return None
+    prefix, tail = parts.path.split(marker, 1)
+    if "/" not in tail:
+        return None
+    bucket, path = tail.split("/", 1)
+    path = re.sub(r"\.[^/.]+$", ".jpg", path)
+    return urlunsplit((parts.scheme, parts.netloc, prefix + marker + bucket + "/thumbnails/v1/" + path, "", ""))
+
+
+def public_image_row(row: dict[str, Any]) -> dict[str, Any]:
+    client = require_image_supabase()
+    result = image_url(row.get("result_image_url"), client)
+    original = image_url(row.get("original_image_url"), client)
+    return {"id": row.get("id"), "device_id": row.get("device_id"),
+            "captured_at": iso(parse_timestamp(row.get("captured_at"))),
+            "insect_count": integer_count(row.get("insect_count")),
+            "average_confidence": row.get("average_confidence"), "processing_status": row.get("processing_status"),
+            "session_id": row.get("session_id", row.get("capture_session_id")),
+            "result_image_url": result, "original_image_url": original, "image_url": result or original,
+            "thumbnail_url": thumbnail_url(original), "result_thumbnail_url": thumbnail_url(result),
+            "image_available": bool(result or original)}
+
+
+def image_page(period: int, start_date: str | None, end_date: str | None, offset: int, limit: int):
+    first = start_date or (datetime.now(DISPLAY_TZ).date() - timedelta(days=period - 1)).isoformat()
+    start, end = wind_bounds(first, end_date)
+    client = require_image_supabase()
+    columns = DETECTION_COLUMNS
+    session = os.getenv("IMAGE_SESSION_COLUMN", "")
+    if session in ("session_id", "capture_session_id"):
+        columns += "," + session
+    def load():
+        return (client.table("detections").select(columns).eq("device_id", DEVICE_ID)
+                .gte("captured_at", start.isoformat()).lt("captured_at", end.isoformat())
+                .order("captured_at", desc=True).order("id", desc=True)
+                .range(offset, offset + limit).execute()).data or []
+    try:
+        rows = cached_metadata((client, "images", DEVICE_ID, start, end, offset, limit, columns), load)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Image history is temporarily unavailable.") from exc
+    return {"rows": [public_image_row(row) for row in rows[:limit]], "has_more": len(rows) > limit,
+            "offset": offset, "limit": limit, "timezone": DISPLAY_TZ_NAME, "source": "detections"}
+
+
+@app.get("/api/images")
+def image_history(period: int = Query(default=7, ge=1, le=30),
+                  start_date: str | None = None, end_date: str | None = None,
+                  offset: int = Query(default=0, ge=0, le=1000000),
+                  limit: int = Query(default=20, ge=1, le=50)):
+    return image_page(period, start_date, end_date, offset, limit)
 
 
 def counts_by_local_day(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -353,28 +383,14 @@ def activity_summary(current_rows: list[dict[str, Any]], previous_rows: list[dic
 
 
 def read_latest_wind_sources() -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str]]:
-    client = require_supabase()
-    source_rows: dict[str, list[dict[str, Any]]] = {}
-    warnings: list[str] = []
-    for table in ("wind_data", "wind_operation_logs"):
-        try:
-            response = (
-                client.table(table)
-                .select(TELEMETRY_COLUMNS)
-                .eq("device_id", DEVICE_ID)
-                .order("recorded_at", desc=True)
-                .order("id", desc=True)
-                .limit(WIND_PAGE_SIZE)
-                .execute()
-            )
-            source_rows[table] = response.data or []
-        except Exception:
-            logger.warning("Latest wind query failed for %s", table, exc_info=True)
-            source_rows[table] = []
-            warnings.append(f"{table} could not be loaded for latest telemetry.")
-    merged = merge_wind_rows(source_rows["wind_data"], source_rows["wind_operation_logs"])
-    latest_wind = next((row for row in merged if is_valid_wind_reading(row)), None)
-    return (merged[0] if merged else None), latest_wind, warnings
+    try:
+        response = (require_wind_supabase().table("wind_operation_logs").select(TELEMETRY_COLUMNS)
+                    .eq("device_id", DEVICE_ID).order("recorded_at", desc=True).order("id", desc=True)
+                    .limit(1).execute())
+        latest = (response.data or [None])[0]
+        return latest, latest, []
+    except Exception:
+        return None, None, ["Wind operation logs could not be loaded for latest telemetry."]
 
 
 def read_health(
@@ -452,38 +468,23 @@ def dashboard(
         {"date": day, "count": count}
         for day, count in sorted(day_counts.items())
     ]
-    client = require_supabase()
-
-    def public_row(row: dict[str, Any]) -> dict[str, Any]:
-        result_url = image_url(row.get("result_image_url"), client)
-        original_url = image_url(row.get("original_image_url"), client)
-        return {
-            "captured_at": iso(parse_timestamp(row.get("captured_at"))),
-            "insect_count": integer_count(row.get("insect_count")),
-            "result_image_url": result_url,
-            "original_image_url": original_url,
-            "image_url": result_url or original_url,
-            "image_available": bool(result_url or original_url),
-        }
-
-    history_source = [
-        row for row in rows
-        if (timestamp := parse_timestamp(row.get("captured_at"))) and timestamp >= current_start_utc
-    ]
-    history_rows = history_source[history_offset:history_offset + history_limit]
-    recent = [public_row(row) for row in history_rows]
-    history_has_more = history_offset + history_limit < len(history_source)
-    latest = public_row(rows[0]) if rows else None
+    detail = image_page(period, None, None, history_offset, history_limit)
+    recent = detail["rows"]
+    history_has_more = detail["has_more"]
+    latest = recent[0] if recent else None
     today_rows = [
         row for row in rows
         if (timestamp := parse_timestamp(row.get("captured_at")))
         and timestamp.astimezone(DISPLAY_TZ).date() == today
     ]
-    wind_rows, wind_warnings = read_wind_sources(current_start_utc, tomorrow_start_utc)
-    wind_history = wind_rows[wind_offset:wind_offset + wind_limit]
-    latest_event = wind_rows[0] if wind_rows else None
-    latest_wind = next((row for row in wind_rows if is_valid_wind_reading(row)), None)
-    health_data = read_health(latest_event, latest_wind)
+    wind_warnings = []
+    try:
+        wind_result = wind_page(DEVICE_ID, current_start_utc, tomorrow_start_utc, wind_offset, wind_limit)
+    except HTTPException as exc:
+        wind_result = {"rows": [], "has_more": False}
+        wind_warnings.append(exc.detail)
+    wind_history = wind_result["rows"]
+    health_data = read_health()
     wind_warnings = list(dict.fromkeys(wind_warnings + health_data.get("source_warnings", [])))
     return {
         "trap_name": TRAP_NAME,
@@ -502,9 +503,12 @@ def dashboard(
         "wind_history_warning": " ".join(wind_warnings) if wind_warnings else None,
         "wind_history_offset": wind_offset,
         "wind_history_limit": wind_limit,
-        "wind_history_has_more": wind_offset + wind_limit < len(wind_rows),
+        "wind_history_has_more": wind_result["has_more"],
         "latest_detection": latest,
         "recent_detections": recent,
+        "image_records": recent,
+        "image_records_truncated": history_has_more,
+        "summary_truncated": len(rows) >= MAX_DETECTIONS,
         "history_offset": history_offset,
         "history_limit": history_limit,
         "history_has_more": history_has_more,

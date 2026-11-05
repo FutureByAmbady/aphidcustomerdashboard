@@ -1,9 +1,10 @@
+import { clearMetadataCache } from '../../functions/api/metadata-cache.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { onRequestGet } from '../../functions/api/wind.js';
 import { onRequestGet as dashboard } from '../../functions/api/dashboard.js';
 const env = { SUPABASE_URL: 'https://legacy.invalid', SUPABASE_KEY: 'legacy-key', WIND_SUPABASE_URL: 'https://wind.invalid', WIND_SUPABASE_SECRET_KEY: 'wind-key', DASHBOARD_DEVICE_ID: 'PI5-001' };
 const call = query => onRequestGet({ env, request: new Request('https://dashboard.invalid/api/wind?' + query) });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { clearMetadataCache(); vi.unstubAllGlobals(); });
 describe('wind operation API', () => {
   it('uses separate wind credentials and database filters with bounded pagination, preserving every outcome', async () => {
     const rows = [{ id: 1, device_id: 'PI5-002', status: 'FAILED', actual_pulses: 0 }, { id: 2, status: 'SUCCESS' }, { id: 3, status: 'DAILY_HOME' }];

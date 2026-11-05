@@ -1,5 +1,6 @@
-const DETECTION_COLUMNS = 'device_id,captured_at,insect_count,result_image_url,original_image_url';
-const TELEMETRY_COLUMNS = 'device_id,recorded_at,battery_percent,battery_voltage,wind_direction,wind_angle';
+import { cachedMetadata } from './metadata-cache.js';
+const DETECTION_COLUMNS = 'id,device_id,captured_at,insect_count,result_image_url,original_image_url,average_confidence,processing_status';
+const TELEMETRY_COLUMNS = 'id,device_id,recorded_at,wind_direction,wind_angle,previous_position,target_position,motor_direction,movement,required_pulses,actual_pulses,final_position,status,battery_percent,battery_voltage';
 
 function envValue(env, ...names) {
   for (const name of names) {
@@ -66,29 +67,125 @@ function corsHeaders() {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Cache-Control': 'no-store',
+    'Cache-Control': 'public, max-age=30, s-maxage=60',
   };
 }
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders(), 'Content-Type': 'application/json; charset=utf-8' },
+    headers: { ...corsHeaders(), ...(status >= 400 ? { 'Cache-Control': 'no-store' } : {}), 'Content-Type': 'application/json; charset=utf-8' },
   });
 }
 
-async function querySupabase(env, table, params) {
+export async function querySupabase(env, table, params) {
   const supabaseUrl = envValue(env, 'SUPABASE_URL');
   const supabaseKey = envValue(env, 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'SUPABASE_KEY');
   if (!supabaseUrl || !supabaseKey) throw new Error('Supabase is not configured.');
-  const response = await fetch(`${supabaseUrl}/rest/v1/${table}?${params.toString()}`, {
+  const resource = `${supabaseUrl}/rest/v1/${table}?${params.toString()}`;
+  return cachedMetadata(supabaseKey + '|' + resource, async () => {
+  const response = await fetch(resource, {
     headers: {
       apikey: supabaseKey,
-      Authorization: `Bearer ${supabaseKey}`,
+      ...(supabaseKey.startsWith('sb_') ? {} : { Authorization: `Bearer ${supabaseKey}` }),
     },
   });
-  if (!response.ok) throw new Error(`Supabase request failed with ${response.status}.`);
-  return response.json();
+  if (!response.ok) { const error = new Error('Data source unavailable.'); error.status = response.status; throw error; }
+  const rows = await response.json();
+  if (!Array.isArray(rows)) throw new Error('Invalid metadata response.');
+  return rows;
+  });
+}
+
+function imageEnvironment(env) {
+  const url = envValue(env, 'IMAGE_SUPABASE_URL');
+  const key = envValue(env, 'IMAGE_SUPABASE_SECRET_KEY');
+  // Partial IMAGE_* configuration must fail rather than mix old/new credentials.
+  return url || key ? { SUPABASE_URL: url, SUPABASE_KEY: key } : env;
+}
+
+export async function queryWind(env, params) {
+  return querySupabase({ SUPABASE_URL: envValue(env, 'WIND_SUPABASE_URL'),
+    SUPABASE_KEY: envValue(env, 'WIND_SUPABASE_SECRET_KEY') }, 'wind_operation_logs', params);
+}
+
+export function windBounds(startDate, endDate, timezone = 'Asia/Kolkata') {
+  const today = localDateKey(new Date(), timezone);
+  const first = startDate || shiftDateKey(today, -6);
+  const last = endDate || today;
+  const valid = value => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+  if (!valid(first) || !valid(last) || first < '1900-01-01' || first > last || (Date.parse(last) - Date.parse(first)) / 86400000 > 365 || last === '9999-12-31') {
+    throw new Error('Wind date range must use YYYY-MM-DD, start in 1900 or later, be ordered and no longer than 366 days.');
+  }
+  return [localMidnight(first, timezone), localMidnight(shiftDateKey(last, 1), timezone)];
+}
+
+export async function windPage(env, deviceId, start, end, offset, limit) {
+  const params = new URLSearchParams({ select: TELEMETRY_COLUMNS,
+    recorded_at: 'gte.' + start.toISOString(), order: 'recorded_at.desc.nullslast,id.desc',
+    offset: String(offset), limit: String(limit + 1) });
+  if (deviceId) params.set('device_id', 'eq.' + deviceId);
+  params.append('recorded_at', 'lt.' + end.toISOString());
+  const rows = await queryWind(env, params);
+  if (!Array.isArray(rows)) throw new Error('Unexpected wind response.');
+  return { rows: rows.slice(0, limit).map(row => Object.fromEntries(TELEMETRY_COLUMNS.split(',').map(key => [key, row[key] ?? null]))), has_more: rows.length > limit, offset, limit, source: 'wind_operation_logs' };
+}
+
+export async function windDevices(env) {
+  const key = 'wind-devices|' + envValue(env, 'WIND_SUPABASE_URL') + '|' + envValue(env, 'WIND_SUPABASE_SECRET_KEY');
+  return cachedMetadata(key, async () => {
+  const devices = new Set();
+  let offset = 0;
+  while (true) {
+    const rows = await queryWind(env, new URLSearchParams({ select: 'device_id', order: 'device_id.asc,id.asc', offset: String(offset), limit: '1000' }));
+    if (!Array.isArray(rows)) throw new Error('Unexpected wind device response.');
+    rows.forEach(row => { if (row.device_id) devices.add(row.device_id); });
+    if (rows.length < 1000) break;
+    offset += rows.length;
+  }
+  return [...devices].sort();
+  }, 300000);
+}
+
+export function thumbnailUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const marker = '/storage/v1/object/public/';
+    const index = url.pathname.indexOf(marker);
+    if (index < 0 || !/^https?:$/.test(url.protocol)) return null;
+    const tail = url.pathname.slice(index + marker.length);
+    const slash = tail.indexOf('/');
+    if (slash < 0) return null;
+    url.pathname = url.pathname.slice(0, index) + marker + tail.slice(0, slash) + '/thumbnails/v1/' + tail.slice(slash + 1).replace(/\.[^/.]+$/, '.jpg');
+    url.search = ''; url.hash = '';
+    return url.toString();
+  } catch { return null; }
+}
+export function publicImageRow(row, env) {
+  const imageEnv = imageEnvironment(env);
+  const bucket = envValue(env, 'SUPABASE_BUCKET', 'SUPABASE_STORAGE_BUCKET') || 'monitoring-images';
+  const original = publicImageUrl(row.original_image_url, imageEnv.SUPABASE_URL, bucket);
+  const result = publicImageUrl(row.result_image_url, imageEnv.SUPABASE_URL, bucket);
+  return { id: row.id ?? null, device_id: row.device_id, captured_at: parseTimestamp(row.captured_at)?.toISOString() || null,
+    insect_count: row.insect_count == null ? null : integerCount(row.insect_count), average_confidence: row.average_confidence ?? null,
+    processing_status: row.processing_status ?? null, session_id: row.session_id ?? row.capture_session_id ?? null,
+    original_image_url: original, result_image_url: result, image_url: result || original,
+    thumbnail_url: thumbnailUrl(original), result_thumbnail_url: thumbnailUrl(result), image_available: Boolean(result || original) };
+}
+export async function imagePage(env, { period = 7, start_date, end_date, offset = 0, limit = 20 } = {}) {
+  const timezone = envValue(env, 'DASHBOARD_TIMEZONE') || 'Asia/Kolkata';
+  const today = localDateKey(new Date(), timezone);
+  const [start, end] = windBounds(start_date || shiftDateKey(today, -(period - 1)), end_date || today, timezone);
+  const params = new URLSearchParams({ select: DETECTION_COLUMNS,
+    device_id: 'eq.' + (envValue(env, 'DASHBOARD_DEVICE_ID') || 'PI5-001'),
+    captured_at: 'gte.' + start.toISOString(), order: 'captured_at.desc,id.desc', offset: String(offset), limit: String(limit + 1) });
+  params.append('captured_at', 'lt.' + end.toISOString());
+  const sessionColumn = envValue(env, 'IMAGE_SESSION_COLUMN');
+  if (['session_id', 'capture_session_id'].includes(sessionColumn)) params.set('select', DETECTION_COLUMNS + ',' + sessionColumn);
+  const rows = await querySupabase(imageEnvironment(env), 'detections', params);
+  return { rows: rows.slice(0, limit).map(row => publicImageRow(row, env)), has_more: rows.length > limit,
+    offset, limit, timezone, source: 'detections', start_date: localDateKey(start, timezone), end_date: end_date || today };
 }
 
 function activitySummary(currentRows, previousRows) {
@@ -117,11 +214,12 @@ export async function onRequestGet(context) {
   const period = Math.min(30, Math.max(1, Number.parseInt(url.searchParams.get('period') || '7', 10) || 7));
   const historyOffset = Math.max(0, Number.parseInt(url.searchParams.get('history_offset') || '0', 10) || 0);
   const historyLimit = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get('history_limit') || '5', 10) || 5));
+  const windOffset = Math.max(0, Number.parseInt(url.searchParams.get('wind_offset') || '0', 10) || 0);
+  const windLimit = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get('wind_limit') || '5', 10) || 5));
   const timezone = envValue(env, 'DASHBOARD_TIMEZONE') || 'Asia/Kolkata';
   const deviceId = envValue(env, 'DASHBOARD_DEVICE_ID') || 'PI5-001';
   const trapName = envValue(env, 'DASHBOARD_TRAP_NAME') || 'Trap 001';
   const bucket = envValue(env, 'SUPABASE_BUCKET', 'SUPABASE_STORAGE_BUCKET') || 'monitoring-images';
-  const offlineMinutes = Number(envValue(env, 'OFFLINE_THRESHOLD_MINUTES') || '15');
   const now = new Date();
   const todayKey = localDateKey(now, timezone);
   const currentStartKey = shiftDateKey(todayKey, -(period - 1));
@@ -129,18 +227,37 @@ export async function onRequestGet(context) {
   const currentStart = localMidnight(currentStartKey, timezone);
   const previousStart = localMidnight(previousStartKey, timezone);
   const tomorrowStart = localMidnight(shiftDateKey(todayKey, 1), timezone);
-  const supabaseUrl = envValue(env, 'SUPABASE_URL');
+  const imageEnv = imageEnvironment(env);
+  const supabaseUrl = envValue(imageEnv, 'SUPABASE_URL');
 
   try {
     const detectionParams = new URLSearchParams({
-      select: DETECTION_COLUMNS,
+      select: 'captured_at,insect_count',
       device_id: `eq.${deviceId}`,
       captured_at: `gte.${previousStart.toISOString()}`,
       order: 'captured_at.desc',
-      limit: envValue(env, 'MAX_DETECTIONS') || '5000',
+      limit: '1000',
     });
     detectionParams.append('captured_at', `lt.${tomorrowStart.toISOString()}`);
-    const rows = await querySupabase(env, 'detections', detectionParams);
+    let rows = [];
+    let imageWarning = null;
+    let detailPage = { rows: [], has_more: false };
+    let summaryTruncated = false;
+    try {
+      // Scan only the selected comparison window and only two small scalar columns.
+      // Metadata is cached for 60s; gallery URLs are retrieved separately in a bounded page.
+      for (let offset = 0; offset < 5000; offset += 1000) {
+        detectionParams.set('offset', String(offset));
+        const page = await querySupabase(imageEnv, 'detections', detectionParams);
+        rows.push(...page);
+        if (page.length < 1000) break;
+        if (offset === 4000) summaryTruncated = true;
+      }
+      detailPage = await imagePage(env, { period, offset: historyOffset, limit: historyLimit });
+    }
+    catch (error) { imageWarning = error.status === 402
+      ? 'Image history is inaccessible: the image database has an HTTP 402 egress restriction. Wind history remains available.'
+      : 'Image history is temporarily unavailable. Image migration or server configuration must be verified; wind history remains available.'; }
     const validRows = rows.filter((row) => parseTimestamp(row.captured_at));
     const currentRows = validRows.filter((row) => parseTimestamp(row.captured_at) >= currentStart);
     const previousRows = validRows.filter((row) => parseTimestamp(row.captured_at) < currentStart);
@@ -149,35 +266,35 @@ export async function onRequestGet(context) {
       const key = localDateKey(parseTimestamp(row.captured_at), timezone);
       counts[key] = (counts[key] || 0) + integerCount(row.insect_count);
     }
-    const publicRow = (row) => {
-      const resultUrl = publicImageUrl(row.result_image_url, supabaseUrl, bucket);
-      const originalUrl = publicImageUrl(row.original_image_url, supabaseUrl, bucket);
-      return {
-        captured_at: parseTimestamp(row.captured_at)?.toISOString() || null,
-        insect_count: integerCount(row.insect_count),
-        result_image_url: resultUrl,
-        original_image_url: originalUrl,
-        image_url: resultUrl || originalUrl,
-        image_available: Boolean(resultUrl || originalUrl),
-      };
-    };
-    const historyRows = currentRows.slice(historyOffset, historyOffset + historyLimit).map(publicRow);
-    const latest = validRows.length ? publicRow(validRows[0]) : null;
+    const historyRows = detailPage.rows;
+    let latest = historyOffset === 0 ? historyRows[0] || null : null;
+    if (!latest && !imageWarning) {
+      try {
+        const latestRows = await querySupabase(imageEnv, 'detections', new URLSearchParams({
+          select: DETECTION_COLUMNS, device_id: 'eq.' + deviceId,
+          order: 'captured_at.desc.nullslast,id.desc', limit: '1' }));
+        latest = latestRows[0] ? publicImageRow(latestRows[0], env) : null;
+      } catch { /* A latest-only failure must not hide available history. */ }
+    }
     const todayRows = validRows.filter((row) => localDateKey(parseTimestamp(row.captured_at), timezone) === todayKey);
 
-    const telemetryParams = new URLSearchParams({
-      select: TELEMETRY_COLUMNS,
-      device_id: `eq.${deviceId}`,
-      order: 'recorded_at.desc',
-      limit: '1',
-    });
-    const telemetryRows = await querySupabase(env, 'wind_data', telemetryParams);
-    const telemetry = telemetryRows[0];
-    const recordedAt = parseTimestamp(telemetry?.recorded_at);
-    const ageMinutes = recordedAt ? (now.getTime() - recordedAt.getTime()) / 60000 : null;
+    let windResult = { rows: [], has_more: false };
+    const windWarnings = [];
+    let latestEvent = null;
+    try {
+      windResult = await windPage(env, deviceId, currentStart, tomorrowStart, windOffset, windLimit);
+      const latestRows = await queryWind(env, new URLSearchParams({ select: 'recorded_at,wind_direction,wind_angle,status,battery_percent,battery_voltage', device_id: 'eq.' + deviceId, order: 'recorded_at.desc.nullslast,id.desc', limit: '1' }));
+      latestEvent = latestRows[0] || null;
+    } catch { windWarnings.push('Wind operation logs could not be loaded.'); }
+    const windHistory = windResult.rows;
+    const latestWind = latestEvent;
+    const recordedAt = parseTimestamp(latestEvent?.recorded_at);
     const fields = {};
-    for (const key of ['battery_percent', 'battery_voltage', 'wind_direction', 'wind_angle']) {
-      if (telemetry?.[key] !== null && telemetry?.[key] !== undefined) fields[key] = telemetry[key];
+    for (const key of ['battery_percent', 'battery_voltage', 'status']) {
+      if (latestEvent?.[key] !== null && latestEvent?.[key] !== undefined) fields[key] = latestEvent[key];
+    }
+    for (const key of ['wind_direction', 'wind_angle']) {
+      if (latestWind?.[key] !== null && latestWind?.[key] !== undefined) fields[key] = latestWind[key];
     }
 
     return json({
@@ -186,22 +303,33 @@ export async function onRequestGet(context) {
       timezone,
       generated_at: now.toISOString(),
       period_days: period,
+      image_warning: imageWarning,
+      image_records: historyRows,
+      image_records_truncated: detailPage.has_more,
+      summary_truncated: summaryTruncated,
       kpis: {
-        aphids_today: todayRows.reduce((sum, row) => sum + integerCount(row.insect_count), 0),
-        images_today: todayRows.length,
-        activity: activitySummary(currentRows, previousRows),
+        aphids_today: imageWarning ? null : todayRows.reduce((sum, row) => sum + integerCount(row.insect_count), 0),
+        images_today: imageWarning ? null : todayRows.length,
+        activity: imageWarning ? { label: 'Unavailable', percentage: null, direction: 'unknown' } : activitySummary(currentRows, previousRows),
         last_detection: latest,
       },
       trend: Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => ({ date, count })),
+      wind_history: windHistory,
+      wind_history_warning: windWarnings.length ? windWarnings.join(' ') : null,
+      wind_history_offset: windOffset,
+      wind_history_limit: windLimit,
+      wind_history_has_more: windResult.has_more,
       latest_detection: latest,
       recent_detections: historyRows,
       history_offset: historyOffset,
       history_limit: historyLimit,
-      history_has_more: historyOffset + historyLimit < currentRows.length,
+      history_has_more: detailPage.has_more,
       health: {
-        available: Boolean(telemetry),
-        status: recordedAt && ageMinutes <= offlineMinutes ? 'online' : telemetry ? 'offline' : 'unknown',
-        last_communication: recordedAt?.toISOString() || null,
+        available: Boolean(latestEvent),
+        status: 'unknown',
+        last_communication: null,
+        last_operation: recordedAt?.toISOString() || null,
+        note: 'Historical operation data does not establish device connectivity.',
         fields,
       },
     });

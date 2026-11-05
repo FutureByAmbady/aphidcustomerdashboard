@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import StickySheet from "./StickySheet.jsx";
 import WindHistory from "./WindHistory.jsx";
-import ImageSessions from "./ImageSessions.jsx";
 import { ImageFrame, ImageLinks } from "./ImagePreview.jsx";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, "");
@@ -63,6 +63,11 @@ function App() {
   const [state, setState] = useState("loading");
   const [error, setError] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
+  const imageRequest = useRef(0);
+  const imageDates = useRef({});
+  const imageBusy = useRef(false);
+  const imageOffset = useRef(0);
+  const [imageError, setImageError] = useState("");
 
   const loadDashboard = useCallback(async (signal) => {
     setState("loading");
@@ -74,6 +79,8 @@ function App() {
       const response = await fetch(`${API_BASE_URL}/api/dashboard?period=${period}`, { signal });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.detail || "Unable to load monitoring data.");
+      if (signal?.aborted) return;
+      imageOffset.current = (payload.history_offset || 0) + (payload.recent_detections?.length || 0);
       setData(payload);
       setState("ready");
     } catch (requestError) {
@@ -83,29 +90,46 @@ function App() {
     }
   }, [period]);
 
-  const loadMoreHistory = useCallback(async () => {
-    if (!data?.history_has_more || loadingMore) return;
+  const loadImagePage = useCallback(async (dates, reset = false) => {
+    if (imageBusy.current && !reset) return;
+    const requestId = ++imageRequest.current;
+    imageBusy.current = true;
     setLoadingMore(true);
+    setImageError("");
     try {
-      const offset = data.recent_detections?.length || 0;
-      const response = await fetch(`${API_BASE_URL}/api/dashboard?period=${period}&history_offset=${offset}&history_limit=5`);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.detail || "Unable to load more history.");
-      setData((current) => ({
-        ...payload,
-        recent_detections: [...(current?.recent_detections || []), ...(payload.recent_detections || [])],
-      }));
-    } catch (requestError) {
-      setError(requestError.message || "Unable to load more history.");
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [data, loadingMore, period]);
+      const offset = reset ? 0 : imageOffset.current;
+      const params = new URLSearchParams({ period: String(period), offset: String(offset), limit: '20', ...dates });
+      const response = await fetch(`${API_BASE_URL}/api/images?${params}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || 'Unable to load image history.');
+      if (requestId !== imageRequest.current) return;
+      imageDates.current = dates;
+      imageOffset.current = payload.offset + payload.rows.length;
+      setData(current => {
+        const previous = reset ? [] : current?.recent_detections || [];
+        const unique = new Map([...previous, ...payload.rows].map(row => [row.id ?? row.device_id + ':' + row.captured_at, row]));
+        const rows = [...unique.values()];
+        return { ...current, recent_detections: rows, image_records: rows, history_has_more: payload.has_more,
+          image_records_truncated: payload.has_more, image_warning: null };
+      });
+      setImageError('');
+    } catch (requestError) { if (requestId === imageRequest.current) setImageError(requestError.message || 'Unable to load image history.'); }
+    finally { if (requestId === imageRequest.current) { setLoadingMore(false); imageBusy.current = false; } }
+  }, [period]);
+  const loadMoreHistory = () => loadImagePage(imageDates.current);
 
   useEffect(() => {
+    imageRequest.current += 1; imageBusy.current = false; imageDates.current = {}; imageOffset.current = 0;
+    setLoadingMore(false); setImageError("");
     const controller = new AbortController();
     loadDashboard(controller.signal);
-    return () => controller.abort();
+    // Historical captures do not need 15-second polling. Refresh on a five-minute
+    // cadence only while visible; do not discard filtered/expanded history.
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'hidden' && !imageBusy.current &&
+          imageOffset.current <= 5 && !Object.keys(imageDates.current).length) loadDashboard(controller.signal);
+    }, 300000);
+    return () => { controller.abort(); clearInterval(timer); };
   }, [loadDashboard]);
 
   const todayLabel = useMemo(() => new Intl.DateTimeFormat("en-IN", { dateStyle: "full" }).format(new Date()), []);
@@ -124,6 +148,7 @@ function App() {
           </div>
         )}
         {!data && <WindHistory apiBase={API_BASE_URL} timezone="Asia/Kolkata" />}
+        {imageError && <div className="alert error-alert" role="alert">{imageError}</div>}
         {data && <Dashboard data={data} period={period} setPeriod={setPeriod} onLoadMore={loadMoreHistory} loadingMore={loadingMore} />}
       </main>
       <footer className="footer">Sickle Innovations Pvt Ltd · Smart Aphid Monitoring · Customer monitoring view</footer>
@@ -170,6 +195,7 @@ function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore }) {
         <div className="refresh-note">Updated {formatDate(data.generated_at, data.timezone)}</div>
       </section>
 
+      {data.summary_truncated && <p role="status" className="muted">The summary record limit was reached. Chart and statistics cover only the returned summary records.</p>}
       {data.image_warning && <div className="alert error-alert" role="alert">{data.image_warning}</div>}
       <section className="kpi-grid" aria-label="Monitoring summary">
         <KpiCard label="Aphids detected today" value={kpis.aphids_today} note="Today’s total from processed detections" />
@@ -203,12 +229,12 @@ function Dashboard({ data, period, setPeriod, onLoadMore, loadingMore }) {
         <SystemHealth health={data.health} timezone={data.timezone} />
       </section>
 
+      <StickySheet key={data.device_id} deviceId={data.device_id} apiBase={API_BASE_URL} timezone={data.timezone} />
 
       <section className="history-grid">
         <RecentDetections unavailable={data.image_warning} rows={data.recent_detections || []} timezone={data.timezone} hasMore={data.history_has_more} onLoadMore={onLoadMore} loadingMore={loadingMore} />
         <WindHistory apiBase={API_BASE_URL} timezone={data.timezone} />
       </section>
-      <ImageSessions rows={data.image_records || []} timezone={data.timezone} warning={data.image_warning} truncated={data.image_records_truncated} period={period} />
     </>
   );
 }

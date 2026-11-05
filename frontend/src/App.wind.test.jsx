@@ -12,7 +12,7 @@ it('shows real wind history even when legacy monitoring fails from quota exhaust
   render(<App />);
   await screen.findByText('Unable to load monitoring data right now.');
   await screen.findByText('FAILED');
-  expect(screen.getByText('Actual: 0')).toBeTruthy();
+  expect(screen.queryByText('Actual: 0')).toBeNull();
   expect(screen.queryByText('Aphids detected today')).toBeNull();
   expect(fetch.mock.calls.some(([url]) => String(url).includes('/api/wind?'))).toBe(true);
 });

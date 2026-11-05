@@ -1,9 +1,10 @@
+import { clearMetadataCache } from '../../functions/api/metadata-cache.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { onRequestGet } from '../../functions/api/dashboard.js';
 const legacy = { SUPABASE_URL: 'https://legacy.invalid', SUPABASE_SERVICE_ROLE_KEY: 'legacy-key', SUPABASE_BUCKET: 'monitoring-images', DASHBOARD_DEVICE_ID: 'PI5-001', WIND_SUPABASE_URL: 'https://wind.invalid', WIND_SUPABASE_SECRET_KEY: 'wind-key' };
 const dedicated = { ...legacy, IMAGE_SUPABASE_URL: 'https://images.invalid', IMAGE_SUPABASE_SECRET_KEY: 'images-key' };
 const call = env => onRequestGet({ env, request: new Request('https://dashboard.invalid/api/dashboard') });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { clearMetadataCache(); vi.unstubAllGlobals(); });
 describe('dedicated image project', () => {
   it('uses IMAGE credentials for detections and image paths while leaving wind unchanged', async () => {
     vi.stubGlobal('fetch', vi.fn(async url => new Response(JSON.stringify(String(url).includes('/detections?') ? [{ device_id: 'PI5-001', captured_at: new Date().toISOString(), insect_count: 2, result_image_url: 'device/result image.jpg', original_image_url: 'https://existing.invalid/original.jpg' }] : []))));

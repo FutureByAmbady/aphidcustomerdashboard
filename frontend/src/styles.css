@@ -339,12 +339,36 @@ h3 { font-size: 17px; line-height: 1.2; }
   }
 }
 
+/* Isolated sticky-sheet maintenance card and native modal. */
+.sticky-sheet-panel { margin-bottom: 18px; }
+.sticky-sheet-panel .primary-button { border: 0; }
+.sticky-sheet-panel button:disabled { opacity: .55; cursor: not-allowed; }
+.sheet-pending { color: #865c2e; background: #fff7e8; }
+.sheet-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin: 18px 0; }
+.sheet-metrics span, .sheet-metrics strong { display: block; }
+.sheet-metrics span { color: var(--muted); font-size: 12px; }
+.sheet-metrics strong { margin-top: 8px; color: var(--green-strong); font-size: 18px; }
+.sheet-success { color: var(--green-strong); font-size: 13px; font-weight: 700; }
+.sheet-success span { font-weight: 400; }
+.sheet-warning { padding: 12px; border: 1px solid #eed3a9; border-radius: 8px; color: #80552c; background: #fff8eb; font-size: 13px; line-height: 1.55; }
+.sheet-dialog { width: min(540px, calc(100% - 24px)); max-height: calc(100dvh - 32px); overflow-y: auto; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); background: var(--surface); box-shadow: var(--shadow); }
+.sheet-dialog::backdrop { background: rgba(23,37,28,.5); }
+.sheet-dialog > p { line-height: 1.6; font-size: 13px; }
+.sheet-checkbox { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.6; }
+.sheet-checkbox input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--green); }
+.sheet-key { display: grid; gap: 8px; margin-top: 18px; font-size: 12px; }
+.sheet-key input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.sheet-key span { color: var(--muted); }
+.sheet-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.sticky-sheet-panel :focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
+@media (max-width: 640px) { .sheet-metrics { grid-template-columns: 1fr; gap: 14px; } .sheet-dialog { padding: 18px; } }
+
 /* Wind-only controls preserve the surrounding monitoring layout. */
 .wind-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 0 0 12px; }
 .wind-filters label { display: flex; flex-direction: column; gap: 6px; color: var(--muted, #69766f); font-size: 12px; }
 .wind-filters input, .wind-filters select { min-height: 36px; max-width: 180px; border: 1px solid #dce5df; border-radius: 7px; padding: 6px 8px; background: white; color: #263c30; font: inherit; }
 .wind-source-note { font-size: 11px; color: #69766f; margin: 0 0 12px; }
-.wind-operation-table { min-width: 950px; }
+.wind-operation-table { min-width: 0; }
 .telemetry-failure { color: #a42f2f; background: #fff0ee; }
 .wind-pagination { gap: 10px; align-items: center; font-size: 12px; flex-wrap: wrap; }
 
