@@ -1,3 +1,4 @@
+import { combinedWindPage } from './wind-timeline.js';
 import { cachedMetadata } from './metadata-cache.js';
 const DETECTION_COLUMNS = 'id,device_id,captured_at,insect_count,result_image_url,original_image_url,average_confidence,processing_status';
 const CUSTOMER_WIND_COLUMNS = 'id,device_id,recorded_at,wind_direction,wind_angle,status,battery_percent,battery_voltage';
@@ -123,14 +124,15 @@ export function windBounds(startDate, endDate, timezone = 'Asia/Kolkata') {
 
 export async function windPage(env, deviceId, start, end, offset, limit, customerView = false) {
   const columns = customerView ? CUSTOMER_WIND_COLUMNS : TELEMETRY_COLUMNS;
-  const params = new URLSearchParams({ select: columns,
-    recorded_at: 'gte.' + start.toISOString(), order: 'recorded_at.desc.nullslast,id.desc',
-    offset: String(offset), limit: String(limit + 1) });
-  if (deviceId) params.set('device_id', 'eq.' + deviceId);
-  params.append('recorded_at', 'lt.' + end.toISOString());
-  const rows = await queryWind(env, params);
-  if (!Array.isArray(rows)) throw new Error('Unexpected wind response.');
-  return { rows: rows.slice(0, limit).map(row => Object.fromEntries(columns.split(',').map(key => [key, row[key] ?? null]))), has_more: rows.length > limit, offset, limit, source: 'wind_data' };
+  return combinedWindPage(async (table, rawOffset, pageSize) => {
+    const params = new URLSearchParams({ select: columns, order: 'recorded_at.desc.nullslast,id.desc',
+      offset: String(rawOffset), limit: String(pageSize) });
+    if (deviceId) params.set('device_id', 'eq.' + deviceId);
+    if (start) params.append('recorded_at', 'gte.' + start.toISOString());
+    if (end) params.append('recorded_at', 'lt.' + end.toISOString());
+    return querySupabase({ SUPABASE_URL: envValue(env, 'WIND_SUPABASE_URL'),
+      SUPABASE_KEY: envValue(env, 'WIND_SUPABASE_SECRET_KEY') }, table, params);
+  }, deviceId, start, end, offset, limit, columns);
 }
 
 export async function windDevices(env) {

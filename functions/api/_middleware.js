@@ -7,7 +7,7 @@ export async function onRequest(context) {
   const cache = globalThis.caches?.default;
   if (!cache) return context.next();
   // Isolate old cached snapshots from the corrected live wind-table source.
-  if (url.pathname === '/api/wind' || url.pathname === '/api/dashboard') url.searchParams.set('_source_version', 'wind_data_v1');
+  if (url.pathname === '/api/wind' || url.pathname === '/api/dashboard') url.searchParams.set('_source_version', 'wind_recorded_fallback_v1');
   url.searchParams.sort();
   const key = new Request(url.toString(), { method: 'GET' });
   try {

@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+from .wind_timeline import combined_wind_page
 
 from copy import deepcopy
 from threading import RLock
@@ -161,20 +162,19 @@ def wind_bounds(start_date: str | None, end_date: str | None) -> tuple[datetime,
 def wind_page(device_id: str, start: datetime, end: datetime, offset: int, limit: int, customer_view: bool = False) -> dict[str, Any]:
     client = require_wind_supabase()
     columns = CUSTOMER_WIND_COLUMNS if customer_view else TELEMETRY_COLUMNS
-    def load():
-        query = client.table("wind_data").select(columns)
-        if device_id:
-            query = query.eq("device_id", device_id)
-        return (query.gte("recorded_at", start.isoformat()).lt("recorded_at", end.isoformat())
-                .order("recorded_at", desc=True).order("id", desc=True)
-                .range(offset, offset + limit).execute()).data or []
-    try:
-        rows = cached_metadata((client, "wind", device_id, start, end, offset, limit, columns), load)
-        return {"rows": rows[:limit], "has_more": len(rows) > limit, "offset": offset,
-                "limit": limit, "source": "wind_data"}
-    except Exception as exc:
-        logger.warning("Wind operation log query failed", exc_info=True)
-        raise HTTPException(status_code=502, detail="Unable to load wind operation logs right now.") from exc
+    def load(table, raw_offset, page_size, selected, device, first, last):
+        def fetch_page():
+            query = client.table(table).select(selected)
+            if device:
+                query = query.eq("device_id", device)
+            if first:
+                query = query.gte("recorded_at", first.isoformat())
+            if last:
+                query = query.lt("recorded_at", last.isoformat())
+            return (query.order("recorded_at", desc=True, nullsfirst=False).order("id", desc=True)
+                    .range(raw_offset, raw_offset + page_size - 1).execute()).data or []
+        return cached_metadata((client, "wind-fallback-v1", table, device, first, last, raw_offset, page_size, selected), fetch_page)
+    return combined_wind_page(load, device_id, start, end, offset, limit, columns)
 
 
 @app.get("/api/wind")

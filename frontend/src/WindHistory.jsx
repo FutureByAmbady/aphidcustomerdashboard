@@ -27,7 +27,7 @@ export default function WindHistory({ apiBase, timezone = 'Asia/Kolkata' }) {
         setData(current => offset === 0 ? payload : {
           ...payload,
           rows: [...new Map([...current.rows, ...payload.rows].map(row =>
-            [row.id ?? `${row.device_id}:${row.recorded_at}`, row])).values()],
+            [`${row.source || "wind_data"}:${row.device_id}:${row.id ?? row.recorded_at}`, row])).values()],
         });
       })
       .catch(error => { if (error.name !== 'AbortError' && !controller.signal.aborted) setError(error.message); })
@@ -46,12 +46,12 @@ export default function WindHistory({ apiBase, timezone = 'Asia/Kolkata' }) {
     <div className="panel-heading"><h3>Wind history</h3></div>
     {error && <div className="alert error-alert" role="alert">{error}<button className="text-button" onClick={() => setRetry(value => value + 1)}>Retry wind history</button></div>}
     {data.warning && <p role="status">{data.warning}</p>}
-    {loading && offset === 0 ? <div className="empty-state" role="status">Loading wind operations…</div> : (!data.rows.length ? <div className="empty-state">No wind readings available.</div> : <>
+    {loading && offset === 0 ? <div className="empty-state" role="status">Loading wind operations…</div> : (!data.rows.length ? (!error && <div className="empty-state">No wind readings available.</div>) : <>
       <div className="wind-table-wrap"><table className="wind-table wind-operation-table">
         <thead><tr><th>Time / device</th><th>Wind</th><th>Battery</th><th>Outcome</th></tr></thead>
-        <tbody>{data.rows.map((row, index) => <tr key={row.id ?? index}>
-          <td><strong>{row.recorded_at ? new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date(row.recorded_at)) : '—'}</strong><span className="table-muted">{display(row.device_id)}</span></td>
-          <td>{display(row.wind_direction)}<span className="table-muted">{row.wind_angle == null ? '—' : row.wind_angle + '°'}</span></td>
+        <tbody>{data.rows.map((row, index) => <tr key={`${row.source || "wind_data"}:${row.device_id}:${row.id ?? index}`}>
+          <td><strong>{row.recorded_at ? new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date(row.recorded_at)) : '—'}</strong><span className="table-muted">{display(row.device_id)}</span><span className="table-muted" title={row.source === "wind_operation_logs" ? "Fallback operation record; not a confirmed wind measurement" : "Primary wind measurement"}>{row.source_label || "Wind Data"}{row.priority_unverified ? " (provisional)" : ""}</span></td>
+          <td>{row.source === "wind_operation_logs" ? "Operation: " : ""}{display(row.wind_direction)}<span className="table-muted">{row.wind_angle == null ? '—' : row.wind_angle + '°'}</span></td>
           <td>{row.battery_percent == null ? '—' : row.battery_percent + '%'}<span className="table-muted">{row.battery_voltage == null ? '—' : row.battery_voltage + ' V'}</span></td>
           <td><span className={'telemetry-label telemetry-' + outcomeTone(row.status)}>{display(row.status)}</span></td>
         </tr>)}</tbody>
